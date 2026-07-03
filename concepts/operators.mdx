@@ -1,0 +1,273 @@
+---
+title: "Wayang Operator Catalog: Transformations, Sources, and Sinks"
+sidebarTitle: "Operators"
+description: "Complete reference for Wayang's logical operators: transformations, aggregations, set ops, control flow, sources, sinks, and ML operators."
+---
+
+Wayang ships a rich library of built-in operators that cover the full spectrum of data processing tasks — from simple field projections to iterative machine-learning loops spanning multiple platforms. Every operator in this catalog is a **logical operator**: it describes _what_ to compute, not _how_ or _where_. The optimizer resolves each logical operator to a platform-specific execution operator at runtime, drawing on the mappings contributed by whatever plugins you have registered.
+
+## Logical vs. Execution Operators
+
+The distinction between logical and execution operators is fundamental to Wayang's design:
+
+<Tabs>
+  <Tab title="Logical Operators">
+    Logical operators live in `wayang-basic` and `wayang-core`. They describe computation in abstract, platform-agnostic terms. You use them directly when building a `WayangPlan` or when calling methods on `DataQuanta`.
+
+    ```java
+    // MapOperator is a logical operator — no platform knowledge here
+    MapOperator<String, Integer> lengthOp =
+        new MapOperator<>(String::length, String.class, Integer.class);
+    ```
+
+    Key properties of logical operators:
+    - They hold a `FunctionDescriptor` (UDF) or other parameters.
+    - They provide a `CardinalityEstimator` so the optimizer can reason about data sizes.
+    - They know nothing about JVM threads, Spark RDDs, or JDBC connections.
+  </Tab>
+  <Tab title="Execution Operators">
+    Execution operators live inside platform modules (`wayang-java`, `wayang-spark`, `wayang-flink`, etc.). They implement `ExecutionOperator` and know how to run on a specific engine.
+
+    ```java
+    // JavaMapOperator is an execution operator — Java Streams implementation
+    // You never instantiate these directly; the optimizer selects them.
+    JavaMapOperator<String, Integer> execOp = new JavaMapOperator<>(...);
+    ```
+
+    The optimizer selects execution operators by finding `Mapping`s registered by active plugins. Each mapping declares that a logical operator pattern can be replaced by a particular execution operator on a particular platform.
+  </Tab>
+</Tabs>
+
+## UDFs: FunctionDescriptor Hierarchy
+
+User-defined functions (UDFs) are wrapped in typed descriptor objects rather than passed as raw lambdas. This lets the optimizer inspect metadata (load estimates, complexity class, SQL translations) without executing the function.
+
+| Descriptor | Used by | Java / Scala type |
+|---|---|---|
+| `TransformationDescriptor` | `MapOperator`, `MapPartitionsOperator` | `T → R` |
+| `PredicateDescriptor` | `FilterOperator` | `T → Boolean` |
+| `FlatMapDescriptor` | `FlatMapOperator` | `T → Iterable<R>` |
+| `ReduceDescriptor` | `ReduceOperator`, `ReduceByOperator`, `GlobalReduceOperator` | `(T, T) → T` |
+| `MapPartitionsDescriptor` | `MapPartitionsOperator` | `Iterable<T> → Iterable<R>` |
+
+All descriptor interfaces extend `FunctionDescriptor.SerializableFunction` (or the predicate/binary-operator variants), which extends `java.io.Serializable` — a requirement for shipping UDFs to remote executors like Spark workers.
+
+## Transformations
+
+These operators process elements one by one or partition by partition.
+
+<CardGroup cols={2}>
+  <Card title="map" icon="arrow-right-arrow-left">
+    Applies a `TransformationDescriptor` to each element. Output cardinality equals input cardinality. The most common operator in any pipeline.
+  </Card>
+  <Card title="flatMap" icon="code-branch">
+    Applies a `FlatMapDescriptor` that returns zero or more output elements per input element. Output cardinality is estimated via a configurable selectivity.
+  </Card>
+  <Card title="filter" icon="filter">
+    Applies a `PredicateDescriptor`. Only elements for which the predicate returns `true` are forwarded. Also accepts an optional SQL `WHERE` clause for database pushdown.
+  </Card>
+  <Card title="mapPartitions" icon="table-cells">
+    Applies a `MapPartitionsDescriptor` to an entire partition at once — useful when the UDF needs to look at multiple records together (e.g., mini-batch scoring).
+  </Card>
+  <Card title="sort" icon="arrow-up-a-z">
+    Sorts the dataset by a key function. Platform executors use native sort implementations (e.g., `RDD.sortBy` on Spark).
+  </Card>
+  <Card title="distinct" icon="layer-group">
+    Removes duplicate elements. Uses hashing or sorting depending on the platform.
+  </Card>
+  <Card title="sample" icon="percent">
+    Returns a fixed or fraction-based random sample. Supports Bernoulli, reservoir, and other sampling strategies.
+  </Card>
+  <Card title="zipWithId" icon="hashtag">
+    Appends a unique 64-bit ID to every element, producing `Tuple2<Long, T>`. IDs are not necessarily sequential but are globally unique within the dataset.
+  </Card>
+</CardGroup>
+
+## Aggregations
+
+<CardGroup cols={2}>
+  <Card title="reduceByKey" icon="compress">
+    Groups by a key function and reduces values within each group using a binary operator. Equivalent to `groupByKey + reduce`.
+  </Card>
+  <Card title="reduce / globalReduce" icon="sigma">
+    `ReduceOperator` reduces a keyed group; `GlobalReduceOperator` reduces the entire dataset to a single element.
+  </Card>
+  <Card title="groupBy / materializedGroupBy" icon="object-group">
+    `GroupByOperator` streams groups lazily; `MaterializedGroupByOperator` collects each group into a `Collection` before forwarding. Use the materialized variant when downstream UDFs need random access within a group.
+  </Card>
+  <Card title="count" icon="1">
+    Counts the number of elements in the dataset. Returns a `DataQuanta<Long>`.
+  </Card>
+  <Card title="coGroup" icon="table-columns">
+    Joins two datasets by key and forwards matched groups as `Tuple2<Iterable<A>, Iterable<B>>`. Similar to SQL `FULL OUTER JOIN` at the group level.
+  </Card>
+</CardGroup>
+
+## Binary and Set Operators
+
+| Operator | Description |
+|---|---|
+| `JoinOperator` | Inner equi-join on two datasets by key functions. |
+| `CartesianOperator` | Cross product of two datasets. Use with caution on large inputs. |
+| `UnionAllOperator` | Concatenates two datasets without deduplication. |
+| `IntersectOperator` | Returns elements present in both datasets. |
+| `CoGroupOperator` | Groups both inputs by the same key for custom join logic. |
+
+## Control Flow
+
+Wayang supports iterative algorithms natively through loop operators. All three compile down to the `LoopSubplan` / `LoopHeadOperator` mechanism in the core.
+
+<Tabs>
+  <Tab title="doWhile">
+    Runs the body subplan, evaluates a convergence predicate on a designated convergence output, and repeats until the predicate returns `false` (or until a maximum iteration count is reached).
+
+    ```java
+    // Conceptual doWhile usage via the Scala/Java API
+    DataQuanta<PageRankVector> ranks = initialRanks
+        .doWhile(
+            /* convergence check */ vectors -> !hasConverged(vectors),
+            start -> start.map(/* pagerank step */)
+        );
+    ```
+  </Tab>
+  <Tab title="repeat">
+    Runs the body subplan exactly `n` times. Simpler than `doWhile` when the iteration count is known upfront (e.g., fixed-iteration gradient descent).
+
+    ```java
+    // repeat 10 times
+    DataQuanta<Model> model = initialModel
+        .repeat(10, m -> m.map(/* gradient update */));
+    ```
+  </Tab>
+  <Tab title="loop">
+    The most general loop primitive. Accepts initial input, an iteration body, and a loop condition over a separately produced convergence dataset. Used internally by `doWhile`.
+  </Tab>
+</Tabs>
+
+## Sources
+
+Sources have no inputs; they produce records from an external system.
+
+<Tabs>
+  <Tab title="File / Object Sources">
+    | Operator | Output type | Notes |
+    |---|---|---|
+    | `TextFileSource` | `String` | Reads lines from any URL the configured filesystem supports (local, HDFS, S3). Samples the first MiB for cardinality estimation. |
+    | `ObjectFileSource` | `T` | Reads serialized Java objects from a binary file. |
+    | `CollectionSource` | `T` | Wraps an in-memory `Collection`. Useful for small reference data or tests. |
+    | `ParquetSource` | `Record` | Reads columnar Parquet files; projection and predicate pushdown where supported. |
+    | `GeoJsonFileSource` | `SpatialGeometry` | Reads GeoJSON files for spatial processing (requires `Spatial.plugin()`). |
+  </Tab>
+  <Tab title="Database / Table Sources">
+    | Operator | Notes |
+    |---|---|
+    | `TableSource` | Generic SQL table source; used with the Postgres or SQLite3 plugins. Accepts an optional `WHERE` clause for pushdown. |
+    | `ApacheIcebergSource` | Reads Apache Iceberg tables via any configured Iceberg catalog. |
+  </Tab>
+  <Tab title="Streaming / Cloud Sources">
+    | Operator | Notes |
+    |---|---|
+    | `KafkaTopicSource` | Reads from an Apache Kafka topic. Supported on both Java and Spark. |
+    | `AmazonS3Source` | Reads text files from Amazon S3. Requires AWS credentials in the `Configuration`. |
+    | `AzureBlobStorageSource` | Reads text files from Azure Blob Storage. |
+    | `GoogleCloudStorageSource` | Reads text files from Google Cloud Storage. |
+  </Tab>
+</Tabs>
+
+## Sinks
+
+Sinks have no outputs; they write records to an external system.
+
+| Operator | Target | Notes |
+|---|---|---|
+| `TextFileSink` | Text file | Writes each record as a line via a `TransformationDescriptor<T, String>`. |
+| `ObjectFileSink` | Binary file | Serializes Java objects for later reading by `ObjectFileSource`. |
+| `TableSink` | SQL table | Inserts records into a database table via JDBC (Postgres / SQLite3). |
+| `ParquetSink` | Parquet file | Writes columnar Parquet output. |
+| `KafkaTopicSink` | Kafka topic | Produces records to a Kafka topic. Supported on Java and Spark. |
+| `ApacheIcebergSink` | Iceberg table | Writes records to an Apache Iceberg table. |
+| `LocalCallbackSink` | In-process callback | Calls a `Consumer<T>` for every output record, e.g., to collect results into a local `List`. |
+
+## ML Operators
+
+Machine learning operators follow the same logical/execution split: you express intent (train a model, predict labels) and the optimizer selects the implementation (Spark MLlib, TensorFlow, or a Java-native implementation).
+
+<CardGroup cols={2}>
+  <Card title="KMeansOperator" icon="circle-nodes">
+    Clusters input feature vectors using iterative K-Means. Returns cluster centroids or assignments depending on variant.
+  </Card>
+  <Card title="DLTrainingOperator" icon="brain">
+    Trains a deep learning model described by a `DLModel`. Backed by TensorFlow or other configured DL frameworks.
+  </Card>
+  <Card title="PredictOperator" icon="wand-magic-sparkles">
+    Applies a trained model to feature vectors to produce predictions. Works with any model type that implements the model interface.
+  </Card>
+  <Card title="LogisticRegressionOperator" icon="chart-line">
+    Trains a logistic regression classifier. Takes feature vectors and binary labels (0.0/1.0). Returns a `LogisticRegressionModel`.
+  </Card>
+  <Card title="LinearRegressionOperator" icon="chart-simple">
+    Trains a linear regression model for continuous prediction targets.
+  </Card>
+  <Card title="DecisionTreeClassificationOperator" icon="sitemap">
+    Trains a decision tree for classification. Configurable max depth and minimum instances per node.
+  </Card>
+  <Card title="DecisionTreeRegressionOperator" icon="sitemap">
+    Trains a decision tree for regression (continuous labels). Same parameters as the classification variant.
+  </Card>
+  <Card title="LinearSVCOperator" icon="vector-square">
+    Trains a linear support vector classifier with an L2 regularization parameter.
+  </Card>
+</CardGroup>
+
+<Note>
+ML operators require `MachineLearning.plugin()` and, for deep learning, `wayang-tensorflow` on the classpath. See the [Plugins](/concepts/plugins) page for dependency details.
+</Note>
+
+## Chaining Operators with DataQuanta
+
+The `DataQuanta<T>` class in `wayang-api-scala-java` is the fluent handle you use to chain operators without constructing operator objects manually. Every method returns a new `DataQuanta` representing the next output slot.
+
+```java
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.api.JavaPlanBuilder;
+import org.apache.wayang.basic.data.Tuple2;
+import org.apache.wayang.java.Java;
+import org.apache.wayang.spark.Spark;
+import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
+
+public class WordCount {
+    public static void main(String[] args) {
+        List<Tuple2<String, Integer>> results = new ArrayList<>();
+
+        WayangContext wayang = new WayangContext(new Configuration())
+                .withPlugin(Java.basicPlugin())
+                .withPlugin(Spark.basicPlugin());
+
+        new JavaPlanBuilder(wayang)
+                .withJobName("WordCount")
+                .withUdfJarOf(WordCount.class)
+                // Source
+                .readTextFile("file:///path/to/input.txt")          // TextFileSource
+                // Transformations
+                .flatMap(line -> Arrays.asList(line.split("\\W+"))) // FlatMapOperator
+                .filter(word -> !word.isEmpty())                     // FilterOperator
+                .map(word -> new Tuple2<>(word.toLowerCase(), 1))    // MapOperator
+                // Aggregation
+                .reduceByKey(
+                    Tuple2::getField0,
+                    (a, b) -> new Tuple2<>(a.getField0(), a.getField1() + b.getField1())
+                )                                                    // ReduceByOperator
+                // Sink
+                .collect(results);                                   // LocalCallbackSink
+
+        results.forEach(t -> System.out.println(t.field0 + ": " + t.field1));
+    }
+}
+```
+
+<Tip>
+`DataQuanta` methods like `filter()`, `map()`, and `flatMap()` accept plain Scala/Java lambdas. Under the hood they wrap them in the appropriate `FunctionDescriptor` (e.g., `PredicateDescriptor` for `filter`). You only need to construct descriptors directly if you want to attach a custom `LoadProfileEstimator` or SQL alternative.
+</Tip>

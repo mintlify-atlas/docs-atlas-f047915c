@@ -1,0 +1,410 @@
+---
+title: "Apache Wayang Module Reference: Maven Artifacts and Versions"
+sidebarTitle: "Modules"
+description: "Complete Maven artifact reference for Apache Wayang: groupId, artifactId, purpose, and when to include each module in your project."
+---
+
+Apache Wayang is composed of a family of Maven artifacts grouped under the `org.apache.wayang` groupId. Every module has a focused responsibility — the core optimizer, a specific execution-engine adapter, an API surface, or a utility — so you only include what you actually use. This page lists every published artifact, explains its purpose, and shows the exact Maven dependency XML to paste into your `pom.xml`.
+
+<Info>
+All Wayang artifacts share a single version number. Replace `WAYANG_VERSION` in every snippet below with the [latest release available on Maven Central](https://central.sonatype.com/artifact/org.apache.wayang/wayang-core). The current development version in source is `1.1.2-SNAPSHOT`.
+</Info>
+
+---
+
+## Versioning and snapshot builds
+
+Wayang follows standard Apache versioning. Release artifacts are published to Maven Central and require no extra repository configuration. Snapshot artifacts (versions ending in `-SNAPSHOT`) are published to the Apache Foundation snapshot repository and require an additional `<repositories>` block:
+
+```xml
+<repositories>
+  <repository>
+    <id>apache-snapshots</id>
+    <name>Apache Foundation Snapshot Repository</name>
+    <url>https://repository.apache.org/content/repositories/snapshots</url>
+    <snapshots>
+      <enabled>true</enabled>
+    </snapshots>
+    <releases>
+      <enabled>false</enabled>
+    </releases>
+  </repository>
+</repositories>
+```
+
+<Warning>
+Snapshot builds reflect the current state of the `main` branch and may contain breaking changes between builds. Use a release version for production deployments.
+</Warning>
+
+---
+
+## Core modules
+
+These two artifacts are required in every Wayang project. They provide the data model, the cost-based optimizer, the plan compiler, and the built-in operators that every platform adapter depends on.
+
+<CardGroup cols={2}>
+  <Card title="wayang-core" icon="circle-dot">
+    The foundation of the entire framework. Contains the WayangPlan data structures, the cross-platform optimizer, cardinality estimators, cost functions, and the execution engine abstraction layer. You always need this.
+  </Card>
+  <Card title="wayang-basic" icon="layer-group">
+    The standard operator library: `TextFileSource`, `MapOperator`, `FilterOperator`, `FlatMapOperator`, `ReduceByOperator`, `KafkaTopicSource`, `KafkaTopicSink`, and more. Depends on `wayang-core`.
+  </Card>
+</CardGroup>
+
+```xml
+<!-- wayang-core: optimizer, plan model, execution abstraction — always required -->
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-core</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+
+<!-- wayang-basic: standard operators and data types — always recommended -->
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-basic</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+
+---
+
+## API modules
+
+These modules provide the developer-facing API surfaces. Include the ones that match the language and style you want to write pipelines in.
+
+<Accordion title="wayang-api-scala-java — Fluent Scala/Java builder (recommended)">
+Provides the `JavaPlanBuilder` and Scala `PlanBuilder` classes, which expose a fluent, Stream-like API for constructing pipelines. This is the recommended way to write Wayang jobs in both Java and Scala.
+
+**When to include:** Whenever you write pipelines in Java or Scala using the functional/fluent style shown in the WordCount and k-means examples.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-api-scala-java</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-api-python — Python bridge">
+Enables writing Wayang pipelines in Python. The Python code is serialised and executed by the JVM-side runtime, bridging the Python data-science ecosystem with Wayang's cross-platform execution.
+
+**When to include:** When you want to express pipelines in Python or integrate with Python ML libraries.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-api-python</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-api-sql — SQL front-end via Apache Calcite">
+Parses standard SQL queries using [Apache Calcite](https://calcite.apache.org/) and translates them into Wayang plans. Lets you submit SQL to Wayang and have it execute across multiple engines.
+
+**When to include:** When you want to write queries in SQL rather than a programmatic API.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-api-sql</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-api-json — REST/JSON Spring Boot API">
+Exposes Wayang as a Spring Boot REST application that accepts job definitions as JSON payloads. Useful for building services or UIs on top of Wayang without writing JVM code.
+
+**When to include:** When you need a REST endpoint for submitting Wayang jobs programmatically or from a web interface.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-api-json</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+---
+
+## Platform adapters
+
+Each adapter below teaches Wayang how to run operators on a specific execution engine. Include exactly the adapters for the engines you want available. The optimizer will only consider platforms whose adapters are registered on the `WayangContext`.
+
+<Info>
+You must call `.withPlugin(Engine.basicPlugin())` on your `WayangContext` at runtime for every platform adapter you include. Adding the dependency alone is not enough.
+</Info>
+
+### Local / in-process
+
+<Accordion title="wayang-java — Java Streams">
+Executes operators using the Java Streams API, entirely in-process with no external cluster. Startup overhead is negligible, making this the right choice for development, unit tests, and small datasets.
+
+**Typical use:** Always register this alongside heavier engines so the optimizer can keep small operators local.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-java</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+
+```java
+// Registration
+wayangContext.withPlugin(Java.basicPlugin());
+```
+</Accordion>
+
+### Batch processing
+
+<Accordion title="wayang-spark — Apache Spark">
+Translates Wayang operators into Spark RDD and Dataset operations. Best suited for large-scale batch workloads where Spark's parallel shuffle is worth its startup overhead.
+
+**Typical use:** Register alongside `wayang-java` in production. The optimizer will route large shuffles to Spark and keep small lookups local.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-spark</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+
+```java
+wayangContext.withPlugin(Spark.basicPlugin());
+```
+</Accordion>
+
+<Accordion title="wayang-flink — Apache Flink">
+Runs Wayang pipelines on Apache Flink. Suitable for unified batch/stream workloads on Flink-managed clusters.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-flink</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+### Databases
+
+<Accordion title="wayang-postgres — PostgreSQL">
+Pushes relational operators (filters, projections, joins, aggregations) down into a PostgreSQL database using JDBC. Particularly efficient when data already lives in Postgres — no ETL required.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-postgres</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-sqlite3 — SQLite">
+Same as `wayang-postgres` but targets SQLite. Useful for lightweight local testing with a relational platform without running a database server.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-sqlite3</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+### Streaming
+
+<Accordion title="wayang-basic (Kafka operators)">
+Kafka source and sink operators (`KafkaTopicSource`, `KafkaTopicSink`) are part of `wayang-basic` and are executed by the Java platform adapter. Add `kafka-clients` to your classpath and configure `wayang-kafka-defaults.properties` with your broker settings.
+
+```xml
+<!-- Kafka client — required at runtime for KafkaTopicSource / KafkaTopicSink -->
+<dependency>
+    <groupId>org.apache.kafka</groupId>
+    <artifactId>kafka-clients</artifactId>
+    <version>3.9.2</version>
+</dependency>
+```
+</Accordion>
+
+### Specialised
+
+<Accordion title="wayang-giraph — Apache Giraph (graph processing)">
+Executes graph-parallel operators on Apache Giraph, a Pregel-inspired graph processing framework that runs on Hadoop. Include when your pipeline contains graph algorithms.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-giraph</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-tensorflow — TensorFlow">
+Delegates ML inference and training operators to TensorFlow. Allows embedding TensorFlow model execution as a step inside a broader Wayang pipeline.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-tensorflow</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+---
+
+## Plugin modules
+
+These modules add optional capabilities layered on top of the core and platform modules.
+
+<Accordion title="wayang-iejoin — Inequality join">
+Implements the IEJoin algorithm for efficient inequality-predicate joins (e.g., `a.ts < b.ts`). Standard hash or sort-merge joins cannot handle these efficiently. Include this plugin when your pipeline contains range or inequality join conditions.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-iejoin</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-spatial — Geospatial operators">
+Adds spatial data types and geometry operators backed by the [JTS Topology Suite](https://locationtech.github.io/jts/). Include when working with geospatial or geometry data.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-spatial</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-ml — Machine learning integration">
+Bridges Wayang pipelines with ML frameworks via the SQL API. Enables hybrid pipelines that mix data-processing operators with ML model training or scoring steps.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-ml</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+---
+
+## Utility modules
+
+<Accordion title="wayang-profiler — Operator cost profiler">
+Observes actual operator execution times and cardinalities to learn and refine the cost functions used by the optimizer. Run the profiler on representative workloads to improve placement decisions in production.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-profiler</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-benchmark — Benchmark suite">
+Contains benchmark applications (TPC-H queries and synthetic workloads) used to evaluate the optimizer and compare performance across platform combinations. Useful for performance testing and regression checks.
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-benchmark</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+</Accordion>
+
+<Accordion title="wayang-assembly — Distribution packaging">
+Produces the `wayang-submit` binary distribution tarball. This module is not included as a dependency in application code; it is invoked during the build to create the standalone distribution:
+
+```bash
+./mvnw clean package -pl :wayang-assembly -Pdistribution
+```
+
+The resulting archive under `wayang-assembly/target/` contains the `bin/wayang-submit` launcher script used to run Wayang jobs from the command line.
+</Accordion>
+
+---
+
+## Minimum dependency set by use case
+
+| Use case | Required modules |
+|---|---|
+| Local development / unit tests | `wayang-core`, `wayang-basic`, `wayang-api-scala-java`, `wayang-java` |
+| Production batch on Spark | + `wayang-spark` |
+| Kafka source or sink | + `kafka-clients` (transitive via `wayang-basic`) |
+| SQL queries | + `wayang-api-sql` |
+| Geospatial data | + `wayang-spatial` |
+| Graph algorithms | + `wayang-giraph` |
+| ML inference | + `wayang-tensorflow` or `wayang-ml` |
+| Python pipelines | + `wayang-api-python` |
+
+### Minimum `pom.xml` for a Java project
+
+```xml
+<properties>
+    <wayang.version>WAYANG_VERSION</wayang.version>
+</properties>
+
+<dependencies>
+    <!-- Always required -->
+    <dependency>
+        <groupId>org.apache.wayang</groupId>
+        <artifactId>wayang-core</artifactId>
+        <version>${wayang.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.wayang</groupId>
+        <artifactId>wayang-basic</artifactId>
+        <version>${wayang.version}</version>
+    </dependency>
+
+    <!-- Fluent Java/Scala API -->
+    <dependency>
+        <groupId>org.apache.wayang</groupId>
+        <artifactId>wayang-api-scala-java</artifactId>
+        <version>${wayang.version}</version>
+    </dependency>
+
+    <!-- Execution engines — add one per platform you want available -->
+    <dependency>
+        <groupId>org.apache.wayang</groupId>
+        <artifactId>wayang-java</artifactId>
+        <version>${wayang.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.wayang</groupId>
+        <artifactId>wayang-spark</artifactId>
+        <version>${wayang.version}</version>
+    </dependency>
+
+    <!-- Scala runtime (required when using Scala API or Spark) -->
+    <dependency>
+        <groupId>org.scala-lang</groupId>
+        <artifactId>scala-library</artifactId>
+        <version>2.12.0</version>
+    </dependency>
+
+    <!-- Logging -->
+    <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-simple</artifactId>
+        <version>1.7.13</version>
+    </dependency>
+</dependencies>
+```

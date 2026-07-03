@@ -1,0 +1,272 @@
+---
+title: "Wayang Plugin System: Extending Platforms and Operators"
+sidebarTitle: "Plugins"
+description: "Understand Wayang's plugin system: how plugins bundle platform adapters, operator mappings, and channel conversions to extend platforms and operators."
+---
+
+Wayang's extensibility model is built entirely on plugins. Every platform that Wayang can execute on — Java Streams, Apache Spark, Apache Flink, PostgreSQL, and more — is connected to the framework through a plugin. Plugins are additive: the more you register, the more options the optimizer has when planning your job. This page explains what a plugin is, how it works internally, and which built-in plugins are available.
+
+## What Is a Plugin?
+
+A `Plugin` is an interface in `wayang-core` that bundles three categories of components and registers all of them with the `Configuration` at startup:
+
+```java
+// org.apache.wayang.core.plugin.Plugin
+public interface Plugin {
+
+    // 1. The platforms this plugin requires to be active
+    Collection<Platform> getRequiredPlatforms();
+
+    // 2. Mappings: logical operator → execution operator(s) on a platform
+    Collection<Mapping> getMappings();
+
+    // 3. Channel conversions: how to move data between platform boundaries
+    Collection<ChannelConversion> getChannelConversions();
+
+    // 4. Configuration properties specific to this platform/plugin
+    void setProperties(Configuration configuration);
+
+    // Called automatically by WayangContext.withPlugin()
+    default void configure(Configuration configuration) {
+        configuration.getPlatformProvider().addAllToWhitelist(this.getRequiredPlatforms());
+        configuration.getMappingProvider().addAllToWhitelist(this.getMappings());
+        configuration.getChannelConversionProvider().addAllToWhitelist(this.getChannelConversions());
+        this.setProperties(configuration);
+    }
+}
+```
+
+When you call `wayang.withPlugin(Java.basicPlugin())`, Wayang calls `plugin.configure(configuration)`, which whitelists all the plugin's platforms, mappings, and channel conversions. From that point on, the optimizer knows about them and can select them during plan enumeration.
+
+## How Mappings Work
+
+A `Mapping` is a set of `PlanTransformation` rules. Each rule specifies a **pattern** (a subgraph of logical operators) and a **replacement** (one or more execution operators on a specific platform). The optimizer applies these transformations when expanding a logical plan into candidate physical plans.
+
+For example, `Java.basicPlugin()` contributes a mapping that says: "a `MapOperator<In, Out>` can be replaced by a `JavaMapOperator<In, Out>` running on the `JavaPlatform`." Similarly, `Spark.basicPlugin()` contributes "a `MapOperator<In, Out>` can be replaced by a `SparkMapOperator<In, Out>` running on the `SparkPlatform`."
+
+With both plugins registered, the optimizer has two candidate implementations for every `MapOperator` and will pick whichever is cheaper given the estimated data size and platform costs.
+
+```
+Logical Plan:                Physical Plan Options:
+  MapOperator         →     JavaMapOperator   (Java plugin)
+                      →     SparkMapOperator  (Spark plugin)
+```
+
+## Channel Conversions
+
+When the optimizer assigns two adjacent operators to different platforms, it needs a recipe to move data across the boundary. That recipe is a `ChannelConversion`. Each conversion has a source channel type, a target channel type, and an estimated cost (time + resources).
+
+Typical conversions:
+- **Java `CollectionChannel` → HDFS text file → Spark `RddChannel`** — used when the optimizer sends data from a Java stage to a Spark stage.
+- **Spark `RddChannel` → Java `CollectionChannel`** — used when the optimizer pulls Spark results back into a local Java stage.
+- **Any platform → JDBC → PostgreSQL table** — used when the Postgres plugin is active and the optimizer routes output to a SQL stage.
+
+Channel conversions are also contributed by dedicated channel-conversion plugins (e.g., `Java.channelConversionPlugin()`, `Spark.conversionPlugin()`).
+
+<Note>
+The optimizer includes channel conversion costs in its total plan cost. A cross-platform split is only chosen if the savings from using a faster platform outweigh the serialization overhead of the boundary.
+</Note>
+
+## Built-In Plugins
+
+### Java
+
+The Java plugin maps most built-in operators to Java Streams and in-memory collections. It is the default choice for small data and for local development because it has zero startup overhead.
+
+```java
+import org.apache.wayang.java.Java;
+
+wayang.withPlugin(Java.basicPlugin());          // core operators via Java Streams
+wayang.withPlugin(Java.channelConversionPlugin()); // channel conversions for Java↔other
+wayang.withPlugin(Java.graphPlugin());          // PageRank and other graph operators
+```
+
+| Entry point | What it adds |
+|---|---|
+| `Java.basicPlugin()` | Mappings for all standard operators (map, filter, flatMap, reduceByKey, join, etc.) to Java Streams |
+| `Java.channelConversionPlugin()` | Conversions between Java channels and cross-platform serialized formats |
+| `Java.graphPlugin()` | `PageRankOperator` mapping for the `JavaPlatform` |
+
+### Apache Spark
+
+The Spark plugin maps operators to Spark RDD and DataFrame operations. Add it alongside the Java plugin to let the optimizer choose between local and distributed execution per operator.
+
+```java
+import org.apache.wayang.spark.Spark;
+
+wayang.withPlugin(Spark.basicPlugin());     // core operators via Spark RDDs
+wayang.withPlugin(Spark.graphPlugin());     // graph operators via GraphX
+wayang.withPlugin(Spark.conversionPlugin()); // Spark channel conversions
+wayang.withPlugin(Spark.mlPlugin());        // ML operators via Spark MLlib
+```
+
+| Entry point | What it adds |
+|---|---|
+| `Spark.basicPlugin()` | Mappings for standard operators to Spark RDD operations |
+| `Spark.graphPlugin()` | `PageRankOperator` mapping for Spark GraphX |
+| `Spark.conversionPlugin()` | Conversions between Spark channels and cross-platform formats |
+| `Spark.mlPlugin()` | `KMeansOperator`, `LogisticRegressionOperator`, etc. via Spark MLlib |
+
+### Apache Flink
+
+The Flink plugin enables execution on Apache Flink for batch workloads. It mirrors the Java/Spark structure.
+
+```java
+import org.apache.wayang.flink.Flink;
+
+wayang.withPlugin(Flink.basicPlugin());
+wayang.withPlugin(Flink.graphPlugin());
+wayang.withPlugin(Flink.conversionPlugin());
+```
+
+### PostgreSQL and SQLite3
+
+The database plugins unlock SQL pushdown: when the optimizer assigns an operator to a database platform, the execution operator translates it to SQL and runs it inside the database engine. This is especially efficient for `FilterOperator` (maps to `WHERE`) and `MapOperator` over `Record` types (maps to `SELECT`).
+
+```java
+import org.apache.wayang.postgres.Postgres;
+import org.apache.wayang.sqlite3.Sqlite3;
+
+// PostgreSQL
+wayang.withPlugin(Postgres.plugin());           // core SQL operators
+wayang.withPlugin(Postgres.conversionPlugin()); // JDBC channel conversions
+
+// SQLite3 (embedded, no server required)
+wayang.withPlugin(Sqlite3.plugin());
+wayang.withPlugin(Sqlite3.conversionPlugin());
+```
+
+<Warning>
+Database plugins require a `TableSource` or `TableSink` in the plan and connection properties set in the `Configuration` (e.g., `wayang.postgres.jdbc.url`, `wayang.postgres.jdbc.user`). Operators that cannot be translated to SQL (e.g., arbitrary Java lambdas) will not be routed to the database platform.
+</Warning>
+
+### Apache Kafka
+
+Kafka support is built into both the Java and Spark platform modules. When either `Java.basicPlugin()` or `Spark.basicPlugin()` is registered, the `KafkaTopicSource` and `KafkaTopicSink` operators are automatically mapped to their corresponding Kafka implementations.
+
+```java
+// Kafka operators are available once Java or Spark plugin is registered
+wayang.withPlugin(Java.basicPlugin());
+// Now KafkaTopicSource and KafkaTopicSink are usable with the Java platform
+
+wayang.withPlugin(Spark.basicPlugin());
+// Same operators are also available via Spark's Kafka connector
+```
+
+Configure Kafka connection details in the `Configuration`:
+
+```java
+config.setProperty("wayang.kafka.bootstrap.servers", "localhost:9092");
+```
+
+### IEJoin (Inequality Join)
+
+The IEJoin plugin adds support for `IEJoinOperator` and `IESelfJoinOperator` — operators for non-equi joins with inequality predicates (e.g., `a.ts < b.ts AND a.ts > b.ts - interval`). It provides implementations on both Java and Spark.
+
+```java
+import org.apache.wayang.iejoin.IEJoin;
+
+wayang.withPlugin(IEJoin.plugin());       // Java + Spark implementations
+wayang.withPlugin(IEJoin.javaPlugin());   // Java-only
+wayang.withPlugin(IEJoin.sparkPlugin());  // Spark-only
+```
+
+`IEJoin.plugin()` requires both `Java.basicPlugin()` and `Spark.basicPlugin()` to already be registered (or registered alongside it), because it depends on the `JavaPlatform` and `SparkPlatform` being active.
+
+### Spatial
+
+The Spatial plugin enables geo-spatial operators (`SpatialFilterOperator`, `SpatialJoinOperator`) and `GeoJsonFileSource`. Implementations are available on Java, Spark, and PostgreSQL (with PostGIS).
+
+```java
+import org.apache.wayang.spatial.Spatial;
+
+wayang.withPlugin(Spatial.plugin());         // Java + Spark + Postgres implementations
+wayang.withPlugin(Spatial.javaPlugin());     // Java-only
+wayang.withPlugin(Spatial.sparkPlugin());    // Spark-only
+wayang.withPlugin(Spatial.postgresPlugin()); // PostGIS-only
+```
+
+### Machine Learning
+
+`MachineLearning.plugin()` acts as a coordination plugin for ML workflows. It registers the `MachineLearning` platform marker and enables ML-specific configuration properties. Actual ML operator implementations are contributed by `Spark.mlPlugin()` or by the `wayang-tensorflow` module.
+
+```java
+import org.apache.wayang.ml.MachineLearning;
+
+wayang.withPlugin(MachineLearning.plugin())
+      .withPlugin(Spark.basicPlugin())
+      .withPlugin(Spark.mlPlugin()); // Spark MLlib implementations of ML operators
+```
+
+## Registering Multiple Plugins
+
+Plugins are completely additive. Every `withPlugin()` call extends the optimizer's search space without removing anything that was registered before. The more plugins you register, the more platform options the optimizer has for each operator.
+
+```java
+WayangContext wayang = new WayangContext(new Configuration())
+        // Core compute engines
+        .withPlugin(Java.basicPlugin())
+        .withPlugin(Java.channelConversionPlugin())
+        .withPlugin(Spark.basicPlugin())
+        .withPlugin(Spark.conversionPlugin())
+        .withPlugin(Flink.basicPlugin())
+        // Database SQL pushdown
+        .withPlugin(Postgres.plugin())
+        .withPlugin(Postgres.conversionPlugin())
+        // Specialty operators
+        .withPlugin(IEJoin.plugin())
+        .withPlugin(Spatial.plugin())
+        // ML
+        .withPlugin(MachineLearning.plugin())
+        .withPlugin(Spark.mlPlugin());
+```
+
+With all of the above registered, the optimizer has the full set of options and will route each operator to the engine where it will run fastest given your data. On small inputs the local Java engine wins; on large inputs Spark or Flink take over; filter-heavy SQL-compatible workloads may be pushed entirely into PostgreSQL.
+
+<Tip>
+Start with `Java.basicPlugin()` alone during development and testing — it has zero infrastructure requirements and gives you fast iteration cycles. Add Spark, Flink, or database plugins when you're ready to test at scale or on real infrastructure. Because the optimizer re-evaluates costs on each run, the same pipeline automatically adapts as your data grows.
+</Tip>
+
+## Writing a Custom Plugin
+
+If you need an operator or platform not covered by the built-in plugins, you can implement `Plugin` directly:
+
+```java
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.mapping.Mapping;
+import org.apache.wayang.core.optimizer.channels.ChannelConversion;
+import org.apache.wayang.core.platform.Platform;
+import org.apache.wayang.core.plugin.Plugin;
+import java.util.Collection;
+import java.util.List;
+
+public class MyCustomPlugin implements Plugin {
+
+    @Override
+    public Collection<Platform> getRequiredPlatforms() {
+        return List.of(MyCustomPlatform.getInstance());
+    }
+
+    @Override
+    public Collection<Mapping> getMappings() {
+        // Return PlanTransformation rules mapping logical → execution operators
+        return List.of(new MyMapOperatorMapping());
+    }
+
+    @Override
+    public Collection<ChannelConversion> getChannelConversions() {
+        // Return conversions between your channel types and standard ones
+        return List.of(new MyToCollectionChannelConversion());
+    }
+
+    @Override
+    public void setProperties(Configuration configuration) {
+        configuration.setProperty("my.platform.endpoint", "http://localhost:8080");
+    }
+}
+
+// Register it like any built-in plugin
+wayang.withPlugin(new MyCustomPlugin());
+```
+
+See the [Adding Operators guide](https://wayang.apache.org/docs/guide/adding-operators) for a full walkthrough of implementing a new platform adapter with mappings and channel types.

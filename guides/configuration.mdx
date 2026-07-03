@@ -1,0 +1,235 @@
+---
+title: "Configuring Apache Wayang: Properties, Logging, and Tuning"
+sidebarTitle: "Configuration"
+description: "Learn how to configure Apache Wayang using property files and the Configuration API — covering logging, plan explanation, Spark, Flink, and Python settings."
+---
+
+Apache Wayang's behavior is governed by a layered `Configuration` object that every `WayangContext` and `Job` carries. You can supply defaults through `.properties` files, override them programmatically, and fork child configurations for per-job tuning — all without touching application code. This page explains the hierarchy, the key properties to know, and how to configure each supported platform.
+
+## Configuration hierarchy
+
+Wayang resolves configuration values through a parent-chain. Each layer can override the one below it:
+
+```
+Built-in defaults (wayang-core-defaults.properties)
+        ↓
+Platform defaults (spark/default.properties, etc.)
+        ↓
+User file (wayang.properties on classpath, or -Dwayang.configuration=<url>)
+        ↓
+Programmatic overrides (config.setProperty(...))
+```
+
+When you call `new Configuration()`, Wayang looks for a configuration file in this order:
+
+1. The system property `wayang.configuration` — point it at any URL Wayang can open.
+2. A `wayang.properties` resource on the classpath.
+3. If neither is found, a blank (defaults-only) configuration is used.
+
+## The `Configuration` class
+
+`org.apache.wayang.core.api.Configuration` is the central handle. Key methods:
+
+| Method | Purpose |
+|---|---|
+| `new Configuration()` | Creates an instance backed by built-in defaults, then loads the user file if found. |
+| `new Configuration(String url)` | As above, but explicitly loads from the given URL. |
+| `config.fork()` | Creates a child `Configuration` that inherits all values but can override them independently. Useful for per-job settings. |
+| `config.fork(String name)` | Same as `fork()` with a debug-friendly name. |
+| `config.setProperty(key, value)` | Adds or overrides a string property. |
+| `config.getStringProperty(key)` | Retrieves a property value; throws if not present. |
+| `config.getStringProperty(key, fallback)` | Returns `fallback` if the key is absent. |
+| `config.getBooleanProperty(key)` | Parses the value as a boolean. |
+| `config.getLongProperty(key)` | Parses the value as a `long`. |
+| `config.getDoubleProperty(key)` | Parses the value as a `double`. |
+| `config.load(String url)` | Loads additional properties from a URL at runtime. |
+| `config.setCostModel(EstimatableCost)` | Replaces the optimizer cost model (see [ML Cost Model](/guides/ml-cost-optimizer)). |
+
+## Loading configuration from a file
+
+<CodeGroup>
+```java Programmatic file load
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.java.Java;
+
+// Load from an explicit file path
+Configuration config = new Configuration("file:///etc/wayang/production.properties");
+
+WayangContext wayang = new WayangContext(config)
+    .withPlugin(Java.basicPlugin());
+```
+
+```java System property
+// Pass -Dwayang.configuration=file:///etc/wayang/production.properties
+// to the JVM and use the default constructor:
+Configuration config = new Configuration();
+```
+
+```java Classpath resource
+// Place wayang.properties on the classpath root;
+// new Configuration() will find it automatically.
+Configuration config = new Configuration();
+```
+</CodeGroup>
+
+## Setting properties programmatically
+
+```java
+Configuration config = new Configuration();
+
+// Override a single property
+config.setProperty("wayang.core.log.enabled", "false");
+
+// Add multiple overrides
+config.setProperty("spark.master", "spark://my-cluster:7077");
+config.setProperty("spark.app.name", "MyWayangJob");
+
+// Per-job fork — leaves the parent untouched
+Configuration jobConfig = config.fork("my-job");
+jobConfig.setProperty("wayang.core.optimizer.reoptimize", "true");
+```
+
+## Core configuration properties
+
+These live in `wayang-core-defaults.properties` and are always available.
+
+### Statistics and logging
+
+| Property | Default | Description |
+|---|---|---|
+| `wayang.core.log.enabled` | `true` | Enables runtime statistics collection. Set to `false` to reduce I/O in production. |
+| `wayang.core.log.cardinalities` | `~/.wayang/cardinalities.json` | Path where cardinality log entries are written. |
+| `wayang.core.log.executions` | `~/.wayang/executions.json` | Path where per-execution timing data is appended. |
+
+### Plan explanation
+
+| Property | Default | Description |
+|---|---|---|
+| `wayang.core.explain.enabled` | `false` | When `true`, Wayang writes a human-readable plan explanation to disk after optimization. |
+| `wayang.core.explain.directrory` | `~/.wayang/` | Directory for plan explanation files. Note: the property key contains a typo (`directrory`) — use exactly this spelling. |
+
+<Note>
+Enable plan explanation during development to inspect which platforms were selected for each operator. Disable it in production as it generates file I/O on every job.
+</Note>
+
+### Optimizer settings
+
+| Property | Default | Description |
+|---|---|---|
+| `wayang.core.optimizer.pruning.strategies` | `LatentOperatorPruningStrategy` | Comma-separated list of pruning strategy class names. |
+| `wayang.core.optimizer.reoptimize` | `false` | Enables re-optimization after partial execution. |
+| `wayang.core.optimizer.reoptimize.proactive` | `false` | Triggers re-optimization even before a stage boundary. |
+| `wayang.core.optimizer.cardinality.maxspread` | `10` | Maximum acceptable ratio between upper and lower cardinality bounds. |
+| `wayang.core.optimizer.cardinality.minconfidence` | `0.5` | Minimum cardinality estimate confidence to suppress fallback. |
+| `wayang.core.optimizer.enumeration.parallel-tasks` | `false` | Enables parallel plan enumeration (experimental). |
+
+### Fallback cost estimates
+
+When no cost model is provided for an operator, Wayang uses these interval values (in abstract cost units):
+
+| Property | Default | Description |
+|---|---|---|
+| `wayang.core.fallback.udf.cpu.lower` | `100` | Lower bound for UDF CPU cost. |
+| `wayang.core.fallback.udf.cpu.upper` | `1000` | Upper bound for UDF CPU cost. |
+| `wayang.core.fallback.udf.ram.lower` | `100` | Lower bound for UDF RAM cost. |
+| `wayang.core.fallback.udf.ram.upper` | `1000` | Upper bound for UDF RAM cost. |
+| `wayang.core.fallback.operator.cpu.lower` | `100` | Lower bound for operator CPU cost. |
+| `wayang.core.fallback.operator.cpu.upper` | `1000` | Upper bound for operator CPU cost. |
+
+## Spark configuration properties
+
+These defaults are defined in `conf/spark/default.properties` and are merged when the Spark plugin is active.
+
+| Property | Default | Description |
+|---|---|---|
+| `spark.master` | `local[1]` | Spark master URL. Use `local[*]` for all cores, or `spark://host:7077` for a cluster. |
+| `spark.app.name` | `Wayang App` | Application name shown in the Spark UI. |
+| `spark.ui.showConsoleProgress` | `false` | Suppresses Spark's progress bar output to the console. |
+| `spark.driver.allowMultipleContexts` | `true` | Permits multiple `SparkContext` instances — required when Wayang manages the context lifecycle. |
+
+<CodeGroup>
+```properties conf/spark/default.properties
+spark.master = spark://my-cluster:7077
+spark.app.name = Production Wayang Job
+spark.executor.memory = 8g
+spark.executor.cores = 4
+```
+
+```java Programmatic Spark config
+config.setProperty("spark.master", "spark://my-cluster:7077");
+config.setProperty("spark.executor.memory", "8g");
+config.setProperty("spark.executor.cores", "4");
+```
+</CodeGroup>
+
+## Flink configuration properties
+
+These defaults are in `conf/flink/default.properties`.
+
+| Property | Default | Description |
+|---|---|---|
+| `wayang.flink.mode.run` | `collection` | Execution mode: `collection` (local), `local`, or `distribution` (cluster). |
+| `wayang.flink.paralelism` | `1` | Default operator parallelism. Note: property key has a single `l` (`paralelism`). |
+| `wayang.flink.master` | *(unset)* | Flink JobManager host (required for `distribution` mode). |
+| `wayang.flink.port` | *(unset)* | Flink JobManager port (required for `distribution` mode). |
+
+<CodeGroup>
+```properties Local Flink
+wayang.flink.mode.run = local
+wayang.flink.paralelism = 4
+```
+
+```properties Cluster Flink
+wayang.flink.mode.run = distribution
+wayang.flink.master = flink-jobmanager.example.com
+wayang.flink.port = 6123
+wayang.flink.paralelism = 16
+```
+</CodeGroup>
+
+## Python API configuration
+
+The Python API requires two path properties so Wayang can launch the Python worker process.
+
+| Property | Default | Description |
+|---|---|---|
+| `wayang.api.python.worker` | `/var/www/html/python/src/pywy/execution/worker.py` | Absolute path to the Python worker entry point. |
+| `wayang.api.python.path` | `python3` | Python executable name or absolute path. |
+| `wayang.api.python.env.path` | `/usr/local/lib/python3.8/dist-packages` | Path to the Python `site-packages` directory used by the worker. |
+
+```java
+config.setProperty("wayang.api.python.worker", "/opt/wayang/python/src/pywy/execution/worker.py");
+config.setProperty("wayang.api.python.path", "/usr/bin/python3");
+config.setProperty("wayang.api.python.env.path", "/home/user/.venv/lib/python3.10/site-packages");
+```
+
+## Monitor configuration
+
+| Property | Default | Description |
+|---|---|---|
+| `wayang.core.monitor.enabled` | `false` | Enables the built-in job monitor. |
+
+## Configuration precedence: complete example
+
+```java
+// 1. Built-in defaults load automatically
+Configuration config = new Configuration();
+
+// 2. User file (wayang.properties on classpath) already merged by constructor
+
+// 3. Programmatic overrides take highest precedence
+config.setProperty("spark.master", "local[4]");
+config.setProperty("wayang.core.log.enabled", "true");
+config.setProperty("wayang.core.explain.enabled", "true");
+
+// 4. Per-job child config — useful for A/B testing different settings
+Configuration jobConfig = config.fork("experiment-1");
+jobConfig.setProperty("wayang.core.optimizer.reoptimize", "true");
+
+WayangContext wayang = new WayangContext(config);
+```
+
+<Tip>
+Use `config.fork()` to create job-specific overrides without affecting the shared parent configuration. This is especially useful in multi-tenant or batch-submission scenarios.
+</Tip>

@@ -1,47 +1,160 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Apache Wayang: Your First Pipeline"
+sidebarTitle: "Quickstart"
+description: "Build a WordCount pipeline with Apache Wayang, run it locally with Java Streams, then on Spark, then let the optimizer choose — no rewrites needed."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+This guide walks you through building a WordCount pipeline with Apache Wayang. You'll run the same pipeline in three configurations — local only, Spark only, and optimizer-driven across both — so you can see firsthand how Wayang separates *what* your pipeline does from *where* it runs. You don't need a Spark cluster for the first step; the Java Streams engine runs entirely in-process on your machine.
 
 ## Prerequisites
 
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+- Java 17 with `JAVA_HOME` set
+- Maven (for building your project)
+- The Wayang dependencies added to your `pom.xml` — see [Installation](/installation)
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+<Step title="Run locally with Java Streams">
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+Register only the `Java.basicPlugin()` and Wayang will execute the entire pipeline on Java Streams — no cluster, no external services, nothing to install beyond the JDK.
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
-</Steps>
+<CodeGroup>
+
+```java WordCount.java
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.api.JavaPlanBuilder;
+import org.apache.wayang.basic.data.Tuple2;
+import org.apache.wayang.java.Java;
+import java.util.Arrays;
+
+public class WordCount {
+    public static void main(String[] args) {
+        // Register ONLY the local Java engine → runs on your machine, no cluster needed.
+        WayangContext wayang = new WayangContext(new Configuration())
+                .withPlugin(Java.basicPlugin());
+
+        new JavaPlanBuilder(wayang)
+                .withJobName("WordCount")
+                .withUdfJarOf(WordCount.class)
+                .readTextFile("file:///path/to/input.txt")
+                .flatMap(line -> Arrays.asList(line.split("\\W+")))
+                .filter(word -> !word.isEmpty())
+                .map(word -> new Tuple2<>(word.toLowerCase(), 1))
+                .reduceByKey(Tuple2::getField0,
+                             (t1, t2) -> new Tuple2<>(t1.getField0(), t1.getField1() + t2.getField1()))
+                .writeTextFile("file:///path/to/output.txt", t -> t.getField0() + ": " + t.getField1());
+    }
+}
+```
+
+</CodeGroup>
+
+Compile and run this class. Wayang executes it entirely using Java Streams — fast startup, no cluster overhead, ideal for development and small datasets.
+
+</Step>
+
+<Step title="Run on Spark by swapping the plugin">
+
+Now run the *exact same pipeline* on Apache Spark. You don't touch the pipeline operators — you change which platform you register. Comment out `Java.basicPlugin()` and register `Spark.basicPlugin()` instead.
+
+<CodeGroup>
+
+```java WordCount.java (Spark)
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.api.JavaPlanBuilder;
+import org.apache.wayang.basic.data.Tuple2;
+import org.apache.wayang.spark.Spark;               // swap the import
+import java.util.Arrays;
+
+public class WordCount {
+    public static void main(String[] args) {
+        // Same pipeline as before — only the registered platform changed.
+        WayangContext wayang = new WayangContext(new Configuration())
+                // .withPlugin(Java.basicPlugin())    // comment out the local engine
+                .withPlugin(Spark.basicPlugin());     // register Spark instead
+
+        new JavaPlanBuilder(wayang)
+                .withJobName("WordCount")
+                .withUdfJarOf(WordCount.class)
+                .readTextFile("file:///path/to/input.txt")
+                .flatMap(line -> Arrays.asList(line.split("\\W+")))
+                .filter(word -> !word.isEmpty())
+                .map(word -> new Tuple2<>(word.toLowerCase(), 1))
+                .reduceByKey(Tuple2::getField0,
+                             (t1, t2) -> new Tuple2<>(t1.getField0(), t1.getField1() + t2.getField1()))
+                .writeTextFile("file:///path/to/output.txt", t -> t.getField0() + ": " + t.getField1());
+    }
+}
+```
+
+</CodeGroup>
+
+The same pipeline now executes on Spark. You changed *where* it runs without changing *what* it does. You can swap to Flink or any other supported platform the same way: change the import and the registered plugin.
+
+<Note>
+  **Why register only Spark here?** Wayang's real power comes from registering multiple platforms and letting the optimizer pick. But on a tiny test file the optimizer will almost always choose the local engine — Spark's startup overhead isn't worth it for small data — so you'd never actually see Spark run. Registering Spark alone forces the issue so you can confirm it works end-to-end. Step 3 shows the production pattern.
+</Note>
+
+</Step>
+
+<Step title="Register both and let the optimizer choose">
+
+This is the point of Wayang. In production you register every engine you have and let the cost-based optimizer decide which platform executes each operator, potentially splitting a single job across engines.
+
+<CodeGroup>
+
+```java WordCount.java (optimizer-driven)
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.api.JavaPlanBuilder;
+import org.apache.wayang.basic.data.Tuple2;
+import org.apache.wayang.java.Java;
+import org.apache.wayang.spark.Spark;
+import java.util.Arrays;
+
+public class WordCount {
+    public static void main(String[] args) {
+        // Register BOTH platforms — Wayang's optimizer decides which to use per step.
+        WayangContext wayang = new WayangContext(new Configuration())
+                .withPlugin(Java.basicPlugin())
+                .withPlugin(Spark.basicPlugin());
+
+        new JavaPlanBuilder(wayang)
+                .withJobName("WordCount")
+                .withUdfJarOf(WordCount.class)
+                .readTextFile("file:///path/to/input.txt")
+                .flatMap(line -> Arrays.asList(line.split("\\W+")))
+                .filter(word -> !word.isEmpty())
+                .map(word -> new Tuple2<>(word.toLowerCase(), 1))
+                .reduceByKey(Tuple2::getField0,
+                             (t1, t2) -> new Tuple2<>(t1.getField0(), t1.getField1() + t2.getField1()))
+                .writeTextFile("file:///path/to/output.txt", t -> t.getField0() + ": " + t.getField1());
+    }
+}
+```
+
+</CodeGroup>
+
+Now Wayang owns the placement decision. For each operator it estimates the cost on every registered platform and picks the cheapest — keeping a small job entirely local, pushing a large one to Spark, or mixing both within the same job as data volume and query shape demand.
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  On small input you'll see the optimizer keep everything local. That's the optimizer working correctly, not ignoring Spark. Cross-platform splits appear once the data is large enough to justify Spark's startup overhead. The optimizer learns better cost estimates over time via the optional `wayang-profiler` module.
 </Tip>
+
+</Step>
+
+</Steps>
+
+## Run the bundled WordCount via `wayang-submit`
+
+If you've built Wayang from source and extracted the assembly, you can run the included WordCount application directly from the command line without writing any Java. This is a quick way to validate your installation:
+
+```bash
+bin/wayang-submit org.apache.wayang.apps.wordcount.Main java file://$(pwd)/README.md
+```
+
+The first argument (`java`) tells the bundled app which platform to register. Successful output prints word-frequency pairs to stdout.
+
+See the [Installation](/installation) guide for how to build the assembly, extract it, and set up `wayang-submit` on your `PATH`.

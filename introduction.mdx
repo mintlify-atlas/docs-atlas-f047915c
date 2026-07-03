@@ -1,0 +1,90 @@
+---
+title: "Apache Wayang: The Cross-Platform Data Processing Framework"
+sidebarTitle: "Introduction"
+description: "Apache Wayang lets you write a data pipeline once and run it on any engine — Java Streams, Spark, Flink, PostgreSQL, and more — without rewriting."
+---
+
+Apache Wayang is the first open-source cross-platform data processing framework. You write your pipeline once against a single API, register the execution engines you have available, and let Wayang run it — either on the engine you explicitly choose, or on whichever platform its cost-based optimizer determines is best for each step. When your data outgrows one machine you don't rewrite anything; you just make another engine available.
+
+## The problem Wayang solves
+
+Most data processing systems are built around a single execution engine. That constraint is invisible at first, but it surfaces the moment your needs change: you want to test locally before going to a cluster, move from Spark to Flink, or push only the heavy aggregation steps to a distributed engine while keeping the rest local. In a traditional setup, every one of those moves means rewriting your pipeline against a new API and building new glue code.
+
+Wayang sits one level above any individual engine. Your pipeline is expressed as a logical plan using Wayang's operator API. Wayang translates that plan into physical operations on whatever execution platforms you've registered. Switching platforms — or mixing them — is a configuration change, not a code change.
+
+## How it works
+
+Every Wayang job passes through three stages:
+
+1. **Logical plan** — you describe *what* to compute using Wayang's operator API (`readTextFile`, `flatMap`, `filter`, `map`, `reduceByKey`, `writeTextFile`, and others). No engine details are expressed here.
+2. **Optimizer** — Wayang's cost-based optimizer inspects the registered platforms, estimates execution cost for each operator on each platform (using cardinality estimations and learned cost functions), and produces an optimized execution plan. A single logical job can be split across multiple platforms if that produces the lowest estimated cost.
+3. **Execution** — Wayang dispatches each operator to its assigned platform and runs the job. Results flow back through Wayang to your application.
+
+This design means the *same source code* runs locally during development, on Spark in production, or across both in a single job — with no changes to the pipeline itself.
+
+## Supported platforms
+
+Wayang ships adapter modules for every major processing tier:
+
+| Platform | Module | Use case |
+|---|---|---|
+| Java Streams | `wayang-java` | Local execution, development, small data |
+| Apache Spark | `wayang-spark` | Large-scale batch processing |
+| Apache Flink | `wayang-flink` | Stream and batch processing |
+| Apache Giraph | `wayang-graphchi` | Graph processing |
+| PostgreSQL | `wayang-postgres` | SQL-capable relational data |
+| SQLite | `wayang-sqlite3` | Lightweight embedded SQL |
+| Apache Kafka | `wayang-kafka` | Streaming data ingestion |
+| TensorFlow | `wayang-tensorflow` | Machine learning workloads |
+
+Register any combination of these by calling `.withPlugin(...)` on your `WayangContext`. The optimizer will use only the platforms you've registered.
+
+## Available APIs
+
+Wayang exposes four API surfaces so you can use the style that fits your team:
+
+- **Java fluent API** — a Scala-like builder (`JavaPlanBuilder`) that chains operators in a readable, type-safe way. This is the recommended API for most Java projects.
+- **Scala API** — a native Scala builder (`PlanBuilder`) that uses Scala idioms and implicit conversions.
+- **SQL** — express queries in standard SQL; Wayang compiles them to its operator graph.
+- **Java native (low-level)** — direct manipulation of the operator graph. Useful for framework authors; most application developers should prefer the fluent Java API.
+
+## Architecture overview
+
+```
+Your pipeline code
+       │
+       ▼
+  WayangContext (registers platforms)
+       │
+       ▼
+  Logical Plan (operators: flatMap, reduceByKey, …)
+       │
+       ▼
+  Cost-based Optimizer
+  ┌────┴─────────────────────────────┐
+  │  Java Streams │ Spark │ Flink │ … │
+  └────┬─────────────────────────────┘
+       │
+       ▼
+  Execution (one or more platforms)
+       │
+       ▼
+  Results back to your application
+```
+
+The plugin architecture makes it straightforward to add new operators and new platform adapters without touching Wayang internals.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Build and run a WordCount pipeline in three steps — local, Spark, then optimizer-driven.
+  </Card>
+  <Card title="Installation" icon="box" href="/installation">
+    Add Wayang to your Maven project and configure the runtime requirements.
+  </Card>
+</CardGroup>
+
+<Note>
+  Apache Wayang is released under the **Apache License, Version 2.0**. All source files in the repository are covered by this license. Copyright 2020–2026 The Apache Software Foundation. Full license text: [apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0).
+</Note>

@@ -1,0 +1,87 @@
+---
+title: "Supported Execution Platforms in Apache Wayang"
+sidebarTitle: "Overview"
+description: "A complete reference of every execution platform Wayang supports, the Maven module that provides it, its entry-point class, and the plugin architecture that wires it all together."
+---
+
+Apache Wayang abstracts your data pipeline away from any single execution engine by treating every engine as a pluggable platform. You register the platforms you want available, and Wayang's cost-based optimizer decides — at runtime — which platform (or combination of platforms) best executes each operator in your job. Adding more platforms to the registry gives the optimizer more choices, which generally produces better execution plans, especially when data volumes or query shapes change across pipeline stages.
+
+## All supported platforms
+
+<CardGroup cols={2}>
+  <Card title="Java Streams" icon="java" href="/platforms/java-streams">
+    Single-JVM execution backed by `java.util.stream`. Zero setup, ideal for development, testing, and small datasets.
+  </Card>
+  <Card title="Apache Spark" icon="bolt" href="/platforms/spark">
+    Distributed batch processing on Spark 3.4.4 / Scala 2.12. Handles large-scale data across a cluster or locally.
+  </Card>
+  <Card title="Apache Flink" icon="water" href="/platforms/flink">
+    Unified stream and batch engine. DataSet API (legacy) and bounded DataStream API both supported.
+  </Card>
+  <Card title="PostgreSQL" icon="database" href="/platforms/databases">
+    Push filter, projection, join, and reduce operators into PostgreSQL via JDBC. Avoids moving data out of the database.
+  </Card>
+  <Card title="SQLite3" icon="database" href="/platforms/databases">
+    Lightweight embedded JDBC platform. Good for edge devices and integration tests that need an in-process SQL engine.
+  </Card>
+  <Card title="Apache Kafka" icon="arrows-split-up-and-left" href="/platforms/databases">
+    `KafkaTopicSource` and `KafkaTopicSink` are first-class logical operators. Both Java Streams and Spark can execute them.
+  </Card>
+  <Card title="Apache Giraph" icon="circle-nodes" href="/platforms/databases">
+    Graph-processing platform for large-scale PageRank and similar BSP algorithms. Entry point: `Giraph.plugin()`.
+  </Card>
+  <Card title="TensorFlow" icon="microchip-ai" href="/platforms/databases">
+    Machine-learning platform exposing `DLTrainingOperator` and `PredictOperator`. Entry point: `Tensorflow.plugin()`.
+  </Card>
+</CardGroup>
+
+## Platform table
+
+| Platform | Maven module | Entry-point class | Notes |
+|---|---|---|---|
+| Java Streams | `wayang-java` | `Java` | Always available; fallback for many operator types |
+| Apache Spark | `wayang-spark` | `Spark` | Requires `SPARK_HOME`; Spark 3.4.4, Scala 2.12 |
+| Apache Flink | `wayang-flink` | `Flink` | DataSet (deprecated) and bounded stream modes |
+| PostgreSQL | `wayang-postgres` | `Postgres` | JDBC; filter/join/projection pushed into SQL |
+| SQLite3 | `wayang-sqlite3` | `Sqlite3` | JDBC; embedded, file-based or in-memory |
+| Apache Kafka | `wayang-java` / `wayang-spark` | `KafkaTopicSource` / `KafkaTopicSink` | Logical operators; executed on Java or Spark |
+| Apache Giraph | `wayang-giraph` | `Giraph` | PageRank; needs a Hadoop/Giraph cluster |
+| TensorFlow | `wayang-tensorflow` | `Tensorflow` | DL training and inference operators |
+
+## Plugin architecture
+
+Every platform ships as one or more **plugins**. A plugin bundles:
+
+1. **Operator mappings** — a table that tells the optimizer "logical operator X can be executed as physical operator Y on this platform."
+2. **Channel conversions** — cost-annotated rules for moving data between platforms (for example, collecting a Spark RDD back to a Java `Collection` to hand off to a downstream operator on Java Streams).
+3. **Default configuration** — a bundled `.properties` file with cost-model parameters, parallelism settings, and connection defaults.
+
+You register plugins on the `WayangContext`:
+
+```java
+WayangContext wayang = new WayangContext(new Configuration())
+        .withPlugin(Java.basicPlugin())   // Java Streams operators
+        .withPlugin(Spark.basicPlugin()); // Spark operators
+```
+
+The optimizer inspects every registered mapping when it builds the execution plan. More mappings available means more candidate plans to compare, which typically lets the optimizer find cheaper routes, especially when it can split a single logical plan across platforms.
+
+<Note>
+  You only pay the overhead of a platform (driver startup, network round-trips, JVM serialization) when the optimizer actually chooses it for at least one operator in the job. Registering an additional platform does not force its use.
+</Note>
+
+## Choosing which plugins to register
+
+| Scenario | Recommended plugins |
+|---|---|
+| Local development / unit tests | `Java.basicPlugin()` |
+| Small–medium production jobs | `Java.basicPlugin()` |
+| Large datasets on a cluster | `Spark.basicPlugin()` |
+| Let Wayang pick automatically | `Java.basicPlugin()` + `Spark.basicPlugin()` |
+| Graph analytics | add `Spark.graphPlugin()` or `Giraph.plugin()` |
+| SQL-heavy pipelines | add `Postgres.plugin()` or `Sqlite3.plugin()` |
+| ML training | add `Tensorflow.plugin()` |
+
+<Tip>
+  In production, register every platform you have available and let the cost-based optimizer decide. Artificially limiting the platform set only helps when you need to guarantee a specific engine for compliance or environment reasons.
+</Tip>

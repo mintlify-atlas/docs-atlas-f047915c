@@ -1,0 +1,156 @@
+---
+title: "Java Streams Platform: Local Execution Without a Cluster"
+sidebarTitle: "Java Streams"
+description: "How to use Wayang's Java Streams platform for local, zero-setup data processing — including plugins, Maven dependency, and a complete word-count example."
+---
+
+The Java Streams platform is Wayang's built-in local execution engine. It runs entirely inside the JVM that starts your application, uses `java.util.stream` under the hood, and requires no external cluster, daemon, or additional installation. Because of this it starts in milliseconds, making it the right choice for development, unit tests, exploratory data work, and any job where the dataset fits comfortably in local memory. When Wayang's cost-based optimizer is given both a local engine and a distributed engine, it almost always prefers Java Streams for small data because the startup cost of a cluster engine exceeds the savings from parallelism.
+
+## Maven dependency
+
+Add the `wayang-java` artifact to your project. You also need `wayang-core`, `wayang-basic`, and the API module — `wayang-java` is the platform-specific piece on top of those:
+
+```xml
+<dependency>
+  <groupId>org.apache.wayang</groupId>
+  <artifactId>wayang-java</artifactId>
+  <version>WAYANG_VERSION</version>
+</dependency>
+```
+
+Replace `WAYANG_VERSION` with the [latest release on Maven Central](https://central.sonatype.com/artifact/org.apache.wayang/wayang-core).
+
+## Entry-point class: `Java`
+
+The `Java` class in `org.apache.wayang.java` is the registry for all Java-platform components. It exposes three static factory methods:
+
+```java
+import org.apache.wayang.java.Java;
+
+// Core set of operators backed by Java Streams (map, filter, reduce, join, …)
+Java.basicPlugin()
+
+// Graph operators on Java (PageRank via Java Streams)
+Java.graphPlugin()
+
+// Channel-conversion rules so data can flow between Java Streams and other platforms
+Java.channelConversionPlugin()
+```
+
+<Note>
+  `Java.channelConversionPlugin()` is not needed when you register only the Java platform. It becomes relevant when you register both Java and another platform (such as Spark) and the optimizer needs to move data between the two engines within a single job.
+</Note>
+
+## Supported operators
+
+`Java.basicPlugin()` provides implementations for all standard Wayang logical operators:
+
+- **Sources**: `TextFileSource`, `ObjectFileSource`, `CollectionSource`, `ParquetSource`, `KafkaTopicSource`, cloud storage sources (S3, GCS, Azure Blob), Apache Iceberg
+- **Transformations**: `MapOperator`, `MapPartitionsOperator`, `FlatMapOperator`, `FilterOperator`, `SortOperator`, `DistinctOperator`, `ZipWithIdOperator`
+- **Aggregations**: `ReduceByOperator`, `GlobalReduceOperator`, `MaterializedGroupByOperator`, `GlobalMaterializedGroupOperator`, `CountOperator`
+- **Multi-input**: `JoinOperator`, `CartesianOperator`, `CoGroupOperator`, `UnionAllOperator`, `IntersectOperator`
+- **Control flow**: `LoopOperator`, `DoWhileOperator`, `RepeatOperator`, `SampleOperator`
+- **Sinks**: `TextFileSink`, `ObjectFileSink`, `LocalCallbackSink`, `KafkaTopicSink`, `ParquetSink`, `TableSink`, Apache Iceberg sink
+
+`Java.graphPlugin()` adds `PageRankOperator` on top of those.
+
+## When the optimizer picks Java Streams
+
+Wayang's optimizer assigns a cost to each candidate execution plan. Cost is a function of CPU, memory, disk I/O, and network I/O predicted for each operator. Java Streams costs are dominated by CPU time on a single core. Distributed engines like Spark carry a fixed initialization cost (`wayang.spark.init.ms = 4500` milliseconds by default in `wayang-spark-defaults.properties`) plus serialization and network overhead.
+
+For small datasets the fixed overhead of a cluster engine makes its total cost higher than single-core Java execution, so the optimizer picks Java Streams. The crossover point depends on your hardware and configuration, but a rough heuristic is: if your dataset fits in a few hundred megabytes and your pipeline is not graph-heavy, expect the optimizer to stay on Java Streams.
+
+If you want to **guarantee** Java Streams execution without registering any other platform, just don't register any other platform:
+
+```java
+WayangContext wayang = new WayangContext(new Configuration())
+        .withPlugin(Java.basicPlugin());
+// The optimizer has no other choice: every operator runs on Java Streams.
+```
+
+## Configuration defaults
+
+The Java platform reads its defaults from `wayang-java-defaults.properties`, bundled inside `wayang-java`. The key properties:
+
+```properties
+wayang.java.cpu.mhz = 2700
+wayang.java.cores = 1
+wayang.java.hdfs.ms-per-mb = 2.7
+wayang.java.stretch = 1
+wayang.java.costs.fix = 0.0
+wayang.java.costs.per-ms = 1.0
+```
+
+You can override any of these via your own `Configuration` object before passing it to `WayangContext`:
+
+```java
+Configuration conf = new Configuration();
+conf.setProperty("wayang.java.cores", "4");  // reflect a 4-core machine
+WayangContext wayang = new WayangContext(conf).withPlugin(Java.basicPlugin());
+```
+
+## Complete local word-count example
+
+The following example runs entirely on the Java Streams platform. No cluster, no environment variables, no additional setup required beyond the Maven dependencies.
+
+```java
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.api.JavaPlanBuilder;
+import org.apache.wayang.basic.data.Tuple2;
+import org.apache.wayang.java.Java;
+import java.util.Arrays;
+import java.util.Collection;
+
+public class LocalWordCount {
+    public static void main(String[] args) {
+
+        // Register only the Java Streams platform — runs locally, no cluster needed.
+        WayangContext wayang = new WayangContext(new Configuration())
+                .withPlugin(Java.basicPlugin());
+
+        Collection<Tuple2<String, Integer>> counts =
+                new JavaPlanBuilder(wayang)
+                        .withJobName("LocalWordCount")
+                        .withUdfJarOf(LocalWordCount.class)
+                        // Read lines from a local text file
+                        .readTextFile("file:///path/to/input.txt").withTargetPlatform(Java.platform())
+                        // Split each line into words
+                        .flatMap(line -> Arrays.asList(line.split("\\W+")))
+                        // Drop empty tokens from leading/trailing whitespace
+                        .filter(word -> !word.isEmpty())
+                        // Pair each word with count 1
+                        .map(word -> new Tuple2<>(word.toLowerCase(), 1))
+                        // Sum counts per word
+                        .reduceByKey(
+                                Tuple2::getField0,
+                                (a, b) -> new Tuple2<>(a.getField0(), a.getField1() + b.getField1()))
+                        // Collect results into a local Java Collection
+                        .collect();
+
+        counts.forEach(t -> System.out.println(t.getField0() + ": " + t.getField1()));
+    }
+}
+```
+
+<Tip>
+  `.withTargetPlatform(Java.platform())` on a source is optional when only one platform is registered. It becomes useful in multi-platform setups where you want to pin the entry point of a sub-plan to a specific engine.
+</Tip>
+
+## Using Java Streams alongside other platforms
+
+Registering both Java Streams and a distributed engine is the recommended production pattern. The optimizer picks the cheapest engine per operator:
+
+```java
+import org.apache.wayang.java.Java;
+import org.apache.wayang.spark.Spark;
+
+WayangContext wayang = new WayangContext(new Configuration())
+        .withPlugin(Java.basicPlugin())
+        .withPlugin(Java.channelConversionPlugin()) // enable Java↔Spark data transfers
+        .withPlugin(Spark.basicPlugin());
+```
+
+<Info>
+  When mixing platforms, Wayang inserts conversion operators automatically wherever data must cross a platform boundary. Each conversion carries a measured cost, so the optimizer accounts for the transfer overhead when choosing the plan.
+</Info>

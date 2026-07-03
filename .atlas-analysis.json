@@ -1,0 +1,102 @@
+{
+  "projectType": "framework",
+  "projectName": "Apache Wayang",
+  "projectDescription": "Apache Wayang is the first open-source cross-platform data processing system that lets you write a pipeline once and run it on any engine — Java Streams, Apache Spark, Flink, PostgreSQL, and more — with a cost-based optimizer that selects the best platform per operator automatically.",
+  "theme": "maple",
+  "primaryColor": "#fa8422",
+  "lightColor": "#b9113f",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/optimizer",
+              "concepts/operators",
+              "concepts/plugins"
+            ]
+          },
+          {
+            "group": "API Guides",
+            "pages": [
+              "api/java-api",
+              "api/scala-api",
+              "api/python-api",
+              "api/sql-api"
+            ]
+          },
+          {
+            "group": "Platforms",
+            "pages": [
+              "platforms/overview",
+              "platforms/java-streams",
+              "platforms/spark",
+              "platforms/flink",
+              "platforms/databases"
+            ]
+          },
+          {
+            "group": "Advanced Guides",
+            "pages": [
+              "guides/configuration",
+              "guides/adding-operators",
+              "guides/ml-cost-optimizer",
+              "guides/spark-datasets",
+              "guides/windows-setup"
+            ]
+          },
+          {
+            "group": "Examples & Reference",
+            "pages": [
+              "reference/examples",
+              "reference/modules",
+              "reference/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Cross-platform execution: write once, run on Java Streams, Apache Spark, Flink, PostgreSQL, SQLite, Kafka, TensorFlow, and more",
+    "Cost-based optimizer that automatically selects the best execution platform per operator",
+    "Fluent Java/Scala API (DataQuanta / PlanBuilder / JavaPlanBuilder) for building pipelines declaratively",
+    "Python API (PyWay) for building Wayang plans from Python",
+    "SQL API powered by Apache Calcite for query-based pipelines",
+    "Plugin/platform adapter architecture for adding new execution engines without modifying core",
+    "ML-based cost model (wayang-ml) using ONNX runtime for learned plan estimation",
+    "Rich operator library: map, filter, flatMap, reduceByKey, join, coGroup, sort, sample, distinct, loop, doWhile, repeat, pageRank, k-means, and more",
+    "Cross-cloud storage sources: Amazon S3, Azure Blob, Google Cloud Storage, Apache Iceberg, Parquet, Kafka",
+    "Cardinality and selectivity estimation for accurate optimizer decisions",
+    "Spatial data processing support via wayang-spatial plugin",
+    "Inequality join support via wayang-iejoin plugin"
+  ],
+  "publicApiSurface": [
+    "WayangContext (org.apache.wayang.core.api) — entry point; register platforms with .withPlugin()",
+    "Configuration (org.apache.wayang.core.api) — key-value configuration for context and jobs",
+    "JavaPlanBuilder (org.apache.wayang.api) — fluent Java builder for Wayang plans",
+    "PlanBuilder (org.apache.wayang.api) — fluent Scala builder for Wayang plans",
+    "DataQuanta[T] (org.apache.wayang.api) — lazy data-flow edge with transformation methods",
+    "Java.basicPlugin() / Spark.basicPlugin() / Flink.basicPlugin() — platform plugin entry points",
+    "DataQuanta#map, filter, flatMap, reduceByKey, groupByKey, join, coGroup, sort, distinct, count, sample, union, intersect, doWhile, repeat",
+    "DataQuanta#readTextFile, readObjectFile, readParquet, readTable, readCollection",
+    "DataQuanta#writeTextFile, writeObjectFile, writeParquet, collect, foreach",
+    "PlanBuilder#buildAndExplain(boolean) — explain plan before execution",
+    "EstimatableCost interface — implement custom cost models for the optimizer",
+    "Plugin interface — implement new platform adapters",
+    "wayang-submit CLI — execute Wayang applications from the command line",
+    "wayang-core-defaults.properties / wayang-defaults.properties — configuration property keys"
+  ]
+}

@@ -1,0 +1,596 @@
+---
+title: "Apache Wayang Example Applications and Code Samples"
+sidebarTitle: "Examples"
+description: "Runnable Apache Wayang examples: WordCount in Java and Scala, WordCount on Kafka, and k-means clustering with the cross-platform optimizer."
+---
+
+Apache Wayang ships with a set of reference applications that demonstrate its core ideas: write your pipeline once against the Wayang API, then point it at any registered execution engine without touching a line of pipeline code. The examples below progress from a file-based WordCount on a single local engine, through a multi-platform version that lets the optimizer choose, to a streaming WordCount that reads from and writes to Apache Kafka topics, and finally to an iterative k-means clustering job that showcases loop support. Each example is self-contained and directly runnable once the required Maven modules are on the classpath.
+
+<Tabs>
+  <Tab title="WordCount">
+
+## WordCount
+
+WordCount is the canonical "Hello, World" of data processing. It reads a text file, splits each line on whitespace, normalises tokens to lower case, and counts how many times each word appears. The example below is taken directly from the `wayang-applications` module and uses the Java fluent API.
+
+### Required Maven modules
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-core</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-basic</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-api-scala-java</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<!-- Include one or both platform adapters -->
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-java</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-spark</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+
+<Note>
+Replace `WAYANG_VERSION` with the [latest release on Maven Central](https://central.sonatype.com/artifact/org.apache.wayang/wayang-core). For snapshot builds append the Apache snapshot repository — see the [Modules reference](/reference/modules) for the repository XML.
+</Note>
+
+### Code
+
+<CodeGroup>
+
+```java Java (wayang-applications)
+package org.apache.wayang.applications;
+
+import org.apache.wayang.api.JavaPlanBuilder;
+import org.apache.wayang.basic.data.Tuple2;
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.core.optimizer.cardinality.DefaultCardinalityEstimator;
+import org.apache.wayang.java.Java;
+import org.apache.wayang.spark.Spark;
+import java.util.Collection;
+import java.util.Arrays;
+
+public class WordCount {
+
+    public static void main(String[] args) {
+
+        // Settings — pass the input path as args[1]
+        String inputUrl = args[1];
+
+        // Get a plan builder.
+        // Register only Java to run locally; uncomment Spark to let the
+        // optimizer choose between both engines.
+        WayangContext wayangContext = new WayangContext(new Configuration())
+                .withPlugin(Java.basicPlugin());
+        //      .withPlugin(Spark.basicPlugin());
+
+        JavaPlanBuilder planBuilder = new JavaPlanBuilder(wayangContext)
+                .withJobName(String.format("WordCount (%s)", inputUrl))
+                .withUdfJarOf(WordCount.class);
+
+        // Build and execute the WayangPlan.
+        Collection<Tuple2<String, Integer>> wordcounts = planBuilder
+                // Read the text file.
+                .readTextFile(inputUrl).withName("Load file")
+
+                // Split each line by non-word characters.
+                .flatMap(line -> Arrays.asList(line.split("\\W+")))
+                .withSelectivity(10, 100, 0.9)
+                .withName("Split words")
+
+                // Filter empty tokens.
+                .filter(token -> !token.isEmpty())
+                .withSelectivity(0.99, 0.99, 0.99)
+                .withName("Filter empty words")
+
+                // Attach counter to each word.
+                .map(word -> new Tuple2<>(word.toLowerCase(), 1))
+                .withName("To lower case, add counter")
+
+                // Sum up counters for every word.
+                .reduceByKey(
+                        Tuple2::getField0,
+                        (t1, t2) -> new Tuple2<>(t1.getField0(), t1.getField1() + t2.getField1())
+                )
+                .withCardinalityEstimator(
+                        new DefaultCardinalityEstimator(0.9, 1, false, in -> Math.round(0.01 * in[0]))
+                )
+                .withName("Add counters")
+
+                // Execute the plan and collect the results.
+                .collect();
+
+        System.out.println(wordcounts);
+        System.out.println("*** Done. ***");
+    }
+}
+```
+
+```scala Scala API
+import org.apache.wayang.api._
+import org.apache.wayang.core.api.{Configuration, WayangContext}
+import org.apache.wayang.java.Java
+import org.apache.wayang.spark.Spark
+
+object WordcountScala {
+  def main(args: Array[String]): Unit = {
+
+    // Settings
+    val inputUrl = "file:/tmp/input.txt"
+
+    // Get a plan builder.
+    // Register both platforms so the optimizer can choose per operator.
+    val wayangContext = new WayangContext(new Configuration)
+      .withPlugin(Java.basicPlugin)
+      .withPlugin(Spark.basicPlugin)
+
+    val planBuilder = new PlanBuilder(wayangContext)
+      .withJobName(s"WordCount ($inputUrl)")
+      .withUdfJarsOf(this.getClass)
+
+    val wordcounts = planBuilder
+      // Read the text file.
+      .readTextFile(inputUrl).withName("Load file")
+
+      // Split each line by non-word characters.
+      .flatMap(_.split("\\W+"), selectivity = 10).withName("Split words")
+
+      // Filter empty tokens.
+      .filter(_.nonEmpty, selectivity = 0.99).withName("Filter empty words")
+
+      // Attach counter to each word.
+      .map(word => (word.toLowerCase, 1)).withName("To lower case, add counter")
+
+      // Sum up counters for every word.
+      .reduceByKey(_._1, (c1, c2) => (c1._1, c1._2 + c2._2)).withName("Add counters")
+      .withCardinalityEstimator((in: Long) => math.round(in * 0.01))
+
+      // Execute the plan and collect the results.
+      .collect()
+
+    println(wordcounts)
+  }
+}
+```
+
+</CodeGroup>
+
+### How to run
+
+<Steps>
+  <Step title="Build and package">
+    From the repository root, compile the applications module and package the assembly distribution:
+
+    ```bash
+    ./mvnw clean install -DskipTests -pl wayang-applications
+    ./mvnw clean package -pl :wayang-assembly -Pdistribution
+    ```
+  </Step>
+  <Step title="Extract the distribution">
+    ```bash
+    cd wayang-assembly/target/
+    tar -xvf apache-wayang-assembly-*-dist.tar.gz
+    cd wayang-*/
+    ```
+  </Step>
+  <Step title="Submit the job">
+    ```bash
+    ./bin/wayang-submit \
+      org.apache.wayang.applications.WordCount \
+      -- \
+      file:///path/to/input.txt
+    ```
+
+    To run on Spark, uncomment `.withPlugin(Spark.basicPlugin())` in the source and repackage before submitting.
+  </Step>
+</Steps>
+
+  </Tab>
+
+  <Tab title="WordCount on Kafka">
+
+## WordCount on Kafka
+
+This example extends the canonical WordCount to read records from an Apache Kafka topic and write the aggregated word counts back to a second Kafka topic. The pipeline structure is identical to the file-based version — only the source and sink operators change. Kafka support is provided through the `KafkaTopicSource` and `KafkaTopicSink` operators built into `wayang-basic`.
+
+### Required Maven modules
+
+```xml
+<!-- Core and basic operators — always required -->
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-core</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-basic</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<!-- Java execution engine -->
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-java</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<!-- Kafka client (required at runtime by KafkaTopicSource / KafkaTopicSink) -->
+<dependency>
+    <groupId>org.apache.kafka</groupId>
+    <artifactId>kafka-clients</artifactId>
+    <version>3.9.2</version>
+</dependency>
+```
+
+<Warning>
+Kafka connection properties (bootstrap servers, security settings, consumer group IDs) are loaded from `wayang-kafka-defaults.properties`. Make sure this file is present on the classpath and configured before running this example.
+</Warning>
+
+### Code
+
+```java
+package org.apache.wayang.applications;
+
+import org.apache.wayang.api.JavaPlanBuilder;
+import org.apache.wayang.basic.data.Tuple2;
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.core.optimizer.cardinality.DefaultCardinalityEstimator;
+import org.apache.wayang.core.optimizer.costs.LoadProfileEstimators;
+import org.apache.wayang.java.Java;
+import org.apache.log4j.Logger;
+import java.util.Arrays;
+
+public class WordCountOnKafkaTopic {
+
+    private static final Logger logger = Logger.getLogger(WordCountOnKafkaTopic.class);
+
+    public static void main(String[] args) {
+
+        // Default topic names — override by passing args[0]
+        String inputTopicName  = "banking-tx-small-csv";
+        String outputTopicName = "word_count_contribution___banking-tx-small-csv";
+
+        if (args.length > 0) {
+            inputTopicName = args[0];
+        }
+
+        Configuration configuration = new Configuration();
+
+        WayangContext wayangContext = new WayangContext(configuration)
+                .withPlugin(Java.basicPlugin());
+
+        JavaPlanBuilder planBuilder = new JavaPlanBuilder(wayangContext)
+                .withJobName(String.format(
+                        "WordCount using Java Context on Kafka topic (%s)", inputTopicName))
+                .withUdfJarOf(WordCountOnKafkaTopic.class);
+
+        // Build the WayangPlan.
+        planBuilder
+                // Read records from the input Kafka topic.
+                .readKafkaTopic(inputTopicName).withName("Load data from topic")
+
+                // Split each record by non-word characters.
+                .flatMap(line -> Arrays.asList(line.split("\\W+")))
+                .withSelectivity(10, 100, 0.9)
+                .withName("Split words")
+
+                // Filter empty tokens.
+                .filter(token -> !token.isEmpty())
+                .withSelectivity(0.99, 0.99, 0.99)
+                .withName("Filter empty words")
+
+                // Attach counter to each word.
+                .map(word -> new Tuple2<>(word.toLowerCase(), 1))
+                .withName("To lower case, add counter")
+
+                // Sum up counters for every word.
+                .reduceByKey(
+                        Tuple2::getField0,
+                        (t1, t2) -> new Tuple2<>(t1.getField0(), t1.getField1() + t2.getField1())
+                )
+                .withCardinalityEstimator(
+                        new DefaultCardinalityEstimator(0.9, 1, false, in -> Math.round(0.01 * in[0]))
+                )
+                .withName("Add counters")
+
+                // Write results back to a Kafka topic.
+                .writeKafkaTopic(
+                        outputTopicName,
+                        d -> String.format("%d, %s", d.getField1(), d.getField0()),
+                        "job_test_1",
+                        LoadProfileEstimators.createFromSpecification(
+                                "wayang.java.kafkatopicsink.load", configuration)
+                );
+
+        System.out.println("### Done. ***");
+    }
+}
+```
+
+### How to run
+
+<Steps>
+  <Step title="Start a Kafka broker">
+    This example requires an accessible Kafka broker. For local development you can start one with Docker:
+
+    ```bash
+    docker run -d --name kafka -p 9092:9092 apache/kafka:latest
+    ```
+  </Step>
+  <Step title="Create the topics">
+    ```bash
+    # Input topic
+    kafka-topics.sh --create \
+      --bootstrap-server localhost:9092 \
+      --topic banking-tx-small-csv
+
+    # Output topic
+    kafka-topics.sh --create \
+      --bootstrap-server localhost:9092 \
+      --topic word_count_contribution___banking-tx-small-csv
+    ```
+  </Step>
+  <Step title="Build and submit">
+    ```bash
+    ./mvnw clean package -pl :wayang-assembly -Pdistribution
+    cd wayang-assembly/target/
+    tar -xvf apache-wayang-assembly-*-dist.tar.gz
+    cd wayang-*/
+
+    ./bin/wayang-submit \
+      org.apache.wayang.applications.WordCountOnKafkaTopic \
+      -- \
+      banking-tx-small-csv
+    ```
+  </Step>
+</Steps>
+
+  </Tab>
+
+  <Tab title="K-Means Clustering">
+
+## K-Means Clustering
+
+Wayang supports iterative processing through its `repeat` operator, which is essential for machine learning workloads. This k-means implementation clusters 2-D points by iterating the assign-and-average loop a fixed number of times. A broadcast variable passes the current centroid set to each `mapJava` call without a separate shuffle. The example uses the Scala API and registers both the Java and Spark engines so the optimizer can pick the most cost-effective platform at each iteration.
+
+### Required Maven modules
+
+```xml
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-core</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-basic</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-api-scala-java</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-java</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.wayang</groupId>
+    <artifactId>wayang-spark</artifactId>
+    <version>WAYANG_VERSION</version>
+</dependency>
+```
+
+### Input format
+
+The input file contains one 2-D point per line in CSV format:
+
+```
+1.2,3.4
+5.6,7.8
+...
+```
+
+### Code
+
+```scala
+import org.apache.wayang.api._
+import org.apache.wayang.core.api.{Configuration, WayangContext}
+import org.apache.wayang.core.function.FunctionDescriptor.ExtendedSerializableFunction
+import org.apache.wayang.core.function.ExecutionContext
+import org.apache.wayang.core.optimizer.costs.LoadProfileEstimators
+import org.apache.wayang.java.Java
+import org.apache.wayang.spark.Spark
+
+import scala.util.Random
+import scala.collection.JavaConversions._
+
+object kmeans {
+  def main(args: Array[String]): Unit = {
+
+    // Settings
+    val inputUrl   = "file:/kmeans.txt"
+    val k          = 5
+    val iterations = 100
+    val configuration = new Configuration
+
+    // Register both platforms — the optimizer picks per step.
+    val wayangContext = new WayangContext(new Configuration)
+      .withPlugin(Java.basicPlugin)
+      .withPlugin(Spark.basicPlugin)
+
+    val planBuilder = new PlanBuilder(wayangContext)
+      .withJobName(s"k-means ($inputUrl, k=$k, $iterations iterations)")
+      .withUdfJarsOf(this.getClass)
+
+    // Data model
+    case class Point(x: Double, y: Double)
+    case class TaggedPoint(x: Double, y: Double, cluster: Int)
+    case class TaggedPointCounter(x: Double, y: Double, cluster: Int, count: Long) {
+      def add_points(that: TaggedPointCounter) =
+        TaggedPointCounter(this.x + that.x, this.y + that.y, this.cluster, this.count + that.count)
+      def average = TaggedPointCounter(x / count, y / count, cluster, 0)
+    }
+
+    // Read and parse the input file.
+    val points = planBuilder
+      .readTextFile(inputUrl).withName("Read file")
+      .map { line =>
+        val fields = line.split(",")
+        Point(fields(0).toDouble, fields(1).toDouble)
+      }.withName("Create points")
+
+    // Create k random initial centroids.
+    val random = new Random
+    val initialCentroids = planBuilder
+      .loadCollection(
+        for (i <- 1 to k) yield TaggedPointCounter(random.nextGaussian(), random.nextGaussian(), i, 0)
+      ).withName("Load random centroids")
+
+    // UDF: for each point, find the nearest centroid.
+    // Centroids are passed in via broadcast rather than a join.
+    class SelectNearestCentroid extends ExtendedSerializableFunction[Point, TaggedPointCounter] {
+
+      var centroids: Iterable[TaggedPointCounter] = _
+
+      override def open(executionCtx: ExecutionContext): Unit = {
+        centroids = executionCtx.getBroadcast[TaggedPointCounter]("centroids")
+      }
+
+      override def apply(point: Point): TaggedPointCounter = {
+        var minDistance      = Double.PositiveInfinity
+        var nearestCentroidId = -1
+        for (centroid <- centroids) {
+          val distance = Math.pow(
+            Math.pow(point.x - centroid.x, 2) + Math.pow(point.y - centroid.y, 2), 0.5
+          )
+          if (distance < minDistance) {
+            minDistance       = distance
+            nearestCentroidId = centroid.cluster
+          }
+        }
+        new TaggedPointCounter(point.x, point.y, nearestCentroidId, 1)
+      }
+    }
+
+    // Iterative k-means loop.
+    val finalCentroids = initialCentroids.repeat(iterations, { currentCentroids =>
+      points
+        .mapJava(
+          new SelectNearestCentroid,
+          udfLoad = LoadProfileEstimators.createFromSpecification(
+            "my.udf.costfunction.key", configuration
+          )
+        )
+        .withBroadcast(currentCentroids, "centroids").withName("Find nearest centroid")
+        .reduceByKey(_.cluster, _.add_points(_)).withName("Add up points")
+        .withCardinalityEstimator(k)
+        .map(_.average).withName("Average points")
+    }).withName("Loop")
+      .collect()
+
+    println(finalCentroids)
+  }
+}
+```
+
+### How to run
+
+<Steps>
+  <Step title="Prepare the input data">
+    Generate a sample point file (or supply your own):
+
+    ```bash
+    python3 -c "
+    import random
+    with open('/tmp/kmeans.txt', 'w') as f:
+        for _ in range(10000):
+            f.write(f'{random.gauss(0,1):.6f},{random.gauss(0,1):.6f}\n')
+    "
+    ```
+  </Step>
+  <Step title="Build and package">
+    ```bash
+    ./mvnw clean package -pl :wayang-assembly -Pdistribution
+    cd wayang-assembly/target/
+    tar -xvf apache-wayang-assembly-*-dist.tar.gz
+    cd wayang-*/
+    ```
+  </Step>
+  <Step title="Submit the job">
+    ```bash
+    ./bin/wayang-submit \
+      org.apache.wayang.apps.kmeans.kmeans \
+      -- \
+      file:///tmp/kmeans.txt
+    ```
+
+    <Tip>
+    Increase `iterations` or `k` in the source to stress-test the optimizer's cross-platform decisions. On large inputs Wayang will push the `reduceByKey` to Spark while keeping small broadcast-variable lookups on the local Java engine.
+    </Tip>
+  </Step>
+</Steps>
+
+  </Tab>
+</Tabs>
+
+---
+
+## Key API patterns across all examples
+
+Every Wayang pipeline follows the same three-step skeleton regardless of language or platform:
+
+<Accordion title="1. Create a WayangContext and register platforms">
+```java
+WayangContext wayangContext = new WayangContext(new Configuration())
+        .withPlugin(Java.basicPlugin())   // local Java Streams engine
+        .withPlugin(Spark.basicPlugin()); // Apache Spark engine
+```
+Register as many or as few platforms as you need. Register one platform for predictability during development; register several in production and let the optimizer decide.
+</Accordion>
+
+<Accordion title="2. Build the plan with a PlanBuilder">
+```java
+JavaPlanBuilder planBuilder = new JavaPlanBuilder(wayangContext)
+        .withJobName("MyJob")
+        .withUdfJarOf(MyClass.class);
+
+// Chain operators exactly like a Java Stream or Scala collection.
+Collection<String> result = planBuilder
+        .readTextFile("file:///input.txt")
+        .flatMap(line -> Arrays.asList(line.split("\\W+")))
+        .filter(w -> !w.isEmpty())
+        .collect();
+```
+Every operator call returns a `DataQuanta<T>` that you continue chaining. Calling `.collect()`, `.writeTextFile()`, or `.writeKafkaTopic()` triggers execution.
+</Accordion>
+
+<Accordion title="3. Provide cardinality and selectivity hints">
+```java
+.flatMap(line -> Arrays.asList(line.split("\\W+")))
+.withSelectivity(10, 100, 0.9)   // (lower, upper, confidence)
+
+.reduceByKey(...)
+.withCardinalityEstimator(
+    new DefaultCardinalityEstimator(0.9, 1, false, in -> Math.round(0.01 * in[0]))
+)
+```
+These hints feed Wayang's cost-based optimizer. Better hints lead to better platform placement decisions. They are optional but recommended for large-scale jobs.
+</Accordion>

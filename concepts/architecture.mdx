@@ -1,0 +1,151 @@
+---
+title: "Apache Wayang Architecture: How Cross-Platform Execution Works"
+sidebarTitle: "Architecture"
+description: "Explore Wayang's layered architecture: how a single logical plan flows through the optimizer and gets executed across Java, Spark, Flink, and more."
+---
+
+Apache Wayang is built around a clean separation between **what** your pipeline does and **where** it runs. You write a logical plan once using Wayang's API, and the framework handles the entire journey from that high-level description down to physical execution on one or more platforms. Understanding the layers between your code and the actual compute engine helps you reason about performance, debugging, and extensibility.
+
+## Architectural Layers
+
+Wayang's execution pipeline passes through five distinct layers. Each layer transforms the pipeline representation into something more concrete, until it eventually runs on one or more real execution engines.
+
+<Steps>
+  <Step title="User API → WayangPlan">
+    Your application code uses either the fluent Java/Scala API (`JavaPlanBuilder` / `PlanBuilder`) or the low-level operator graph API. Either way, the result is a **`WayangPlan`** — a directed acyclic graph (or DAG with loops) of **logical operators** connected by typed slots. Logical operators such as `MapOperator`, `FilterOperator`, and `TextFileSource` describe intent without knowing which platform will run them.
+  </Step>
+  <Step title="WayangPlan → Optimizer">
+    When you call `execute()`, the `WayangContext` creates a **`Job`** and hands the `WayangPlan` to the **optimizer**. The optimizer annotates every operator in the plan with cardinality estimates (how many records will flow through each edge), computes load profiles (CPU, memory, network cost), and enumerates candidate physical implementations for every logical operator.
+  </Step>
+  <Step title="Optimizer → Physical Execution Plan (ExecutionPlan)">
+    The optimizer selects the cheapest combination of execution operators by comparing cost across all registered platforms. The resulting **`ExecutionPlan`** is a graph of **`ExecutionTask`** nodes, each backed by a platform-specific execution operator (e.g., `JavaMapOperator` or `SparkFilterOperator`). Operators are grouped into **`ExecutionStage`** blocks that belong to a single platform.
+  </Step>
+  <Step title="ExecutionPlan → Platform Executors">
+    The **`CrossPlatformExecutor`** walks the `ExecutionPlan` stage by stage. For each stage it calls the appropriate platform's **`Executor`** (e.g., `JavaExecutor`, `SparkExecutor`). Stages on the same platform run without data serialization; stages on different platforms exchange data through **channels** — the typed data conduits described below.
+  </Step>
+  <Step title="Results Back to the Application">
+    Sinks write output to files, databases, or callback functions (via `LocalCallbackSink`). When a `doWhile` or `repeat` loop is in play, the executor re-evaluates loop conditions and re-enters the plan for subsequent iterations before returning final results.
+  </Step>
+</Steps>
+
+## The WayangContext Entry Point
+
+`WayangContext` is the single object your application interacts with before execution. It holds the `Configuration` and the registered plugins. Every call to `withPlugin()` extends the set of platforms and operator mappings the optimizer can use.
+
+```java
+import org.apache.wayang.core.api.Configuration;
+import org.apache.wayang.core.api.WayangContext;
+import org.apache.wayang.java.Java;
+import org.apache.wayang.spark.Spark;
+
+// Create a context with both the local Java engine and Apache Spark registered.
+WayangContext wayang = new WayangContext(new Configuration())
+        .withPlugin(Java.basicPlugin())   // enables Java Streams execution
+        .withPlugin(Spark.basicPlugin()); // enables Apache Spark execution
+```
+
+The fluent `withPlugin()` method returns `this`, so you can chain as many plugins as needed. Once a plugin is registered, its platforms, operator mappings, and channel conversions become available to the optimizer.
+
+You can also inspect or export plans before running them using `wayang.explain(wayangPlan)`, which prints both the logical and the resolved physical plan to help with debugging.
+
+## Logical vs. Execution Operators
+
+The operator model has two tiers:
+
+| Tier | Example classes | Role |
+|------|----------------|------|
+| **Logical operators** | `MapOperator`, `FilterOperator`, `TextFileSource` | Describe the computation in platform-agnostic terms. Live in `wayang-basic`. |
+| **Execution operators** | `JavaMapOperator`, `SparkFilterOperator` | Platform-specific implementations. Live in the platform modules (e.g., `wayang-java`, `wayang-spark`). |
+
+A logical operator is connected to one or more execution operators through **`Mapping`** objects contributed by plugins. During optimization, the optimizer expands each logical operator into its candidate execution operators and picks the one with the lowest estimated cost.
+
+## How Plugins Connect Operators to Platforms
+
+A `Plugin` bundles three things that it contributes to the `Configuration` when registered:
+
+1. **`Mapping`s** — each mapping declares that a logical operator pattern can be replaced by one or more execution operators on a specific platform.
+2. **`ChannelConversion`s** — recipes for converting data between channel types when the optimizer routes consecutive stages to different platforms.
+3. **`Configuration` properties** — platform-specific tuning parameters (e.g., Spark master URL, cost coefficients).
+
+```java
+// Internally, Plugin.configure() registers all three component types:
+public interface Plugin {
+    Collection<Platform>          getRequiredPlatforms();
+    Collection<Mapping>           getMappings();
+    Collection<ChannelConversion> getChannelConversions();
+    void setProperties(Configuration configuration);
+}
+```
+
+When `Java.basicPlugin()` is registered, it contributes `JavaMapOperator` as the execution implementation of `MapOperator` on the `JavaPlatform`, along with channel descriptors for Java collection and iterator channels.
+
+## Channels: Data Flow Between Operators
+
+A **`Channel`** in Wayang's execution plan is the data conduit between two `ExecutionTask` nodes. Each platform defines its own channel types:
+
+- **Java** — `CollectionChannel` (in-memory `Collection<T>`), `StreamChannel` (Java `Stream<T>`)
+- **Spark** — `RddChannel` (Spark RDD), `BroadcastChannel`
+- **Cross-platform** — when two consecutive stages run on different platforms, a `ChannelConversion` writes the data in a serialized format (e.g., a temp file) that the next platform can read
+
+The optimizer takes channel conversion costs into account when deciding whether to keep two consecutive operators on the same platform or split them. Unnecessary cross-platform hops are penalized, so the optimizer naturally clusters related operators together unless there is a clear cost advantage in splitting.
+
+## Execution Flow Diagram
+
+```
+Your Application Code
+        │
+        ▼
+  JavaPlanBuilder / PlanBuilder
+        │  builds
+        ▼
+    WayangPlan  (logical operator DAG)
+        │
+        ▼
+  WayangContext.execute()
+        │  creates
+        ▼
+       Job
+        │  runs
+        ▼
+    Optimizer
+    ├── CardinalityEstimator  (estimates output sizes)
+    ├── LoadProfileEstimator  (estimates CPU / memory / network)
+    ├── PlanEnumerator        (expands logical → execution operators)
+    └── PruningStrategy       (discards dominated plans)
+        │  produces
+        ▼
+  ExecutionPlan  (execution task DAG, grouped into ExecutionStages)
+        │
+        ▼
+  CrossPlatformExecutor
+    ├── JavaExecutor  ──► Java Streams
+    ├── SparkExecutor ──► Apache Spark cluster
+    └── FlinkExecutor ──► Apache Flink cluster
+        │
+        ▼
+     Results / Sinks
+```
+
+<Note>
+The optimizer re-evaluates cardinality estimates after each loop iteration when a `doWhile` or `repeat` operator is present. If actual observed cardinalities differ significantly from estimates, the `CrossPlatformExecutor` can replan subsequent stages at runtime (adaptive re-optimization).
+</Note>
+
+## Configuration
+
+`Configuration` is a layered key-value store that controls every aspect of the runtime. You can override defaults by setting properties programmatically or by placing a `wayang.properties` file on the classpath.
+
+```java
+Configuration config = new Configuration();
+
+// Override the Spark master for this job
+config.setProperty("wayang.spark.master", "spark://my-cluster:7077");
+
+// Set the directory for explain output
+config.setProperty("wayang.core.explain.directory", "/tmp/wayang-plans/");
+
+WayangContext wayang = new WayangContext(config)
+        .withPlugin(Java.basicPlugin())
+        .withPlugin(Spark.basicPlugin());
+```
+
+`WayangContext` forks the configuration it is given (so the original is not modified), and plugins may further layer their own properties on top via `setProperties(Configuration)`.

@@ -1,0 +1,266 @@
+---
+title: "Running Apache Wayang on Windows: Setup and Troubleshooting"
+sidebarTitle: "Windows Setup"
+description: "Complete guide to building and running Apache Wayang on Windows, including Java 17, Maven, Hadoop winutils setup, environment variables, and troubleshooting tips."
+---
+
+Apache Wayang runs on Windows with a few extra steps compared to Linux or macOS. The main requirement is Hadoop's `winutils.exe`, which the Hadoop libraries (used internally by Spark and HDFS) need to perform file system operations on Windows. This guide walks through every step and covers the most common errors you will encounter.
+
+<Note>
+If you are comfortable with Linux tooling, consider using **WSL 2** (Windows Subsystem for Linux) as an alternative. WSL 2 gives you a native Linux environment where Wayang builds and runs without any Hadoop winutils setup. See the [WSL note](#wsl-as-an-alternative) at the bottom of this page.
+</Note>
+
+## Setup steps
+
+<Steps>
+  <Step title="Install Java 17">
+    Download and install **Java 17** from the Eclipse Adoptium project (formerly AdoptOpenJDK):
+
+    ```
+    https://adoptium.net/
+    ```
+
+    After installation, open a new terminal and verify:
+
+    ```cmd
+    java -version
+    ```
+
+    You should see output like `openjdk version "17.x.x"`. If the command is not found, add the JDK `bin` directory to your `PATH` or set `JAVA_HOME`.
+
+    ```cmd
+    setx JAVA_HOME "C:\Program Files\Eclipse Adoptium\jdk-17.x.x-hotspot"
+    setx PATH "%JAVA_HOME%\bin;%PATH%"
+    ```
+  </Step>
+
+  <Step title="Install Maven">
+    Download the latest Maven binary archive from:
+
+    ```
+    https://maven.apache.org/download.cgi
+    ```
+
+    Extract the archive (e.g., to `C:\tools\maven`) and add its `bin` directory to your system `PATH`.
+
+    ```cmd
+    setx PATH "C:\tools\maven\bin;%PATH%"
+    ```
+
+    Open a new terminal and verify:
+
+    ```cmd
+    mvn -version
+    ```
+  </Step>
+
+  <Step title="Install Hadoop winutils">
+    Wayang's Spark and HDFS layers require Hadoop native utilities on Windows. Download a pre-built `winutils.exe` that matches **Hadoop 3.x**:
+
+    ```
+    https://github.com/steveloughran/winutils
+    ```
+
+    Create the target directory and place the executable there:
+
+    ```cmd
+    mkdir C:\hadoop\bin
+    ```
+
+    Copy `winutils.exe` into `C:\hadoop\bin`.
+
+    <Warning>
+    Make sure you download a version that matches the Hadoop version Wayang was built against. Using a mismatched version can cause silent failures during RDD operations or HDFS access.
+    </Warning>
+  </Step>
+
+  <Step title="Set environment variables">
+    Open **System Properties → Advanced → Environment Variables** and add the following:
+
+    **New system variable:**
+
+    | Variable | Value |
+    |---|---|
+    | `HADOOP_HOME` | `C:\hadoop` |
+
+    **Edit `PATH` — add new entry:**
+
+    ```
+    C:\hadoop\bin
+    ```
+
+    Restart your terminal (or log out and back in) after saving so the new values take effect.
+
+    ```cmd
+    :: Alternatively, set for the current session only:
+    set HADOOP_HOME=C:\hadoop
+    set PATH=%HADOOP_HOME%\bin;%PATH%
+    ```
+  </Step>
+
+  <Step title="Verify Hadoop setup">
+    In a new terminal, run:
+
+    ```cmd
+    winutils.exe ls C:\
+    ```
+
+    If no error appears, the setup is correct. A successful response lists the contents of `C:\` similarly to Unix `ls`.
+  </Step>
+
+  <Step title="Build Wayang">
+    Navigate to the Wayang project root and run the full build (skip tests for speed):
+
+    ```cmd
+    ./mvnw clean install -DskipTests
+    ```
+
+    For faster iteration when modifying a single module, compile only that module:
+
+    ```cmd
+    ./mvnw clean install -DskipTests -pl wayang-platforms/wayang-spark
+    ```
+  </Step>
+
+  <Step title="Run a sample job">
+    Package the distribution assembly and run via `wayang-submit`:
+
+    ```cmd
+    ./mvnw clean package -pl :wayang-assembly -Pdistribution
+    cd wayang-assembly\target\
+    tar -xvf apache-wayang-assembly-*-dist.tar.gz
+    cd wayang-*\
+    .\bin\wayang-submit org.apache.wayang.apps.wordcount.WordCountScala file:///C:/data/input.txt file:///C:/data/output.txt
+    ```
+  </Step>
+
+  <Step title="Verify the output">
+    Check that the output directory was created and contains the expected result files:
+
+    ```cmd
+    dir C:\data\output.txt
+    type C:\data\output.txt\part-00000
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<Accordion title="winutils.exe not found">
+**Error message:**
+```
+Could not locate executable null\bin\winutils.exe in the Hadoop binaries.
+```
+
+**Cause:** `HADOOP_HOME` is not set, or `winutils.exe` is not in `%HADOOP_HOME%\bin`.
+
+**Fix:**
+1. Confirm the file exists: `dir C:\hadoop\bin\winutils.exe`
+2. Confirm the variable is set: `echo %HADOOP_HOME%`
+3. If both are correct but the error persists, restart the terminal — environment variable changes do not apply to existing sessions.
+
+```cmd
+set HADOOP_HOME=C:\hadoop
+set PATH=%HADOOP_HOME%\bin;%PATH%
+```
+</Accordion>
+
+<Accordion title="HADOOP_HOME not set or incorrect">
+**Error message:**
+```
+java.io.IOException: (null): CreateFileW(...): The system cannot find the path specified.
+```
+
+**Cause:** `HADOOP_HOME` points to a directory that does not contain a `bin\winutils.exe`.
+
+**Fix:** Check the value with `echo %HADOOP_HOME%` and compare it to where you placed `winutils.exe`. Correct the variable and restart your terminal.
+</Accordion>
+
+<Accordion title="Access denied / permission errors">
+**Error message:**
+```
+org.apache.hadoop.util.Shell$ExitCodeException: ... Access is denied.
+```
+
+**Cause:** The process does not have permission to create temporary directories (typically under `C:\Users\<user>\AppData\Local\Temp\hadoop-...`).
+
+**Fix:** Run your terminal as **Administrator**, or grant your user account write permission to the Hadoop temporary directory:
+
+```cmd
+winutils.exe chmod 777 C:\tmp\hive
+```
+
+If `C:\tmp\hive` does not exist yet, create it first:
+```cmd
+mkdir C:\tmp\hive
+winutils.exe chmod 777 C:\tmp\hive
+```
+</Accordion>
+
+<Accordion title="Maven build fails with 'No compiler is provided'">
+**Cause:** Maven cannot find the JDK. This happens when `JAVA_HOME` points to a JRE (which lacks `javac`) instead of the full JDK.
+
+**Fix:** Set `JAVA_HOME` to the JDK root, not the JRE subdirectory:
+
+```cmd
+:: Correct
+set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-17.x.x-hotspot
+
+:: Incorrect (JRE inside JDK)
+set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-17.x.x-hotspot\jre
+```
+</Accordion>
+
+<Accordion title="java.lang.UnsatisfiedLinkError for Spark native libraries">
+**Cause:** Spark's native IO libraries require Visual C++ Redistributable packages that may not be present on your system.
+
+**Fix:** Install the latest Microsoft Visual C++ Redistributable:
+
+```
+https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
+```
+
+Install both the x64 version. Restart your system after installation.
+</Accordion>
+
+<Accordion title="./mvnw is not recognized">
+**Cause:** The Maven wrapper script (`mvnw`) is a shell script designed for Unix. On Windows use `mvnw.cmd` instead.
+
+```cmd
+mvnw.cmd clean install -DskipTests
+```
+
+Or use `mvn` directly if Maven is on your `PATH`.
+</Accordion>
+
+## WSL as an alternative
+
+Windows Subsystem for Linux 2 (WSL 2) provides a full Linux kernel and eliminates all Windows-specific Hadoop compatibility issues. If you encounter persistent problems, WSL 2 is the recommended path.
+
+<Tabs>
+  <Tab title="Install WSL 2">
+    ```powershell
+    # Run in PowerShell as Administrator
+    wsl --install
+    # Restart when prompted, then set a Linux username/password
+    ```
+
+    After restart, open the Ubuntu (or other distro) terminal and follow the standard Linux build instructions for Wayang — no winutils required.
+  </Tab>
+  <Tab title="Access Windows files from WSL">
+    Your Windows drives are mounted under `/mnt/` in WSL:
+
+    ```bash
+    # Windows C:\ appears as /mnt/c/
+    ls /mnt/c/Users/YourName/
+
+    # Clone or access your Wayang source
+    cd /mnt/c/dev/wayang
+    ./mvnw clean install -DskipTests
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+WSL 2 with VS Code's Remote-WSL extension gives you a Linux-native development experience while keeping your code on the Windows file system.
+</Tip>
