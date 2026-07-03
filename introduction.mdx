@@ -31,10 +31,9 @@ Wayang ships adapter modules for every major processing tier:
 | Java Streams | `wayang-java` | Local execution, development, small data |
 | Apache Spark | `wayang-spark` | Large-scale batch processing |
 | Apache Flink | `wayang-flink` | Stream and batch processing |
-| Apache Giraph | `wayang-graphchi` | Graph processing |
+| Apache Giraph | `wayang-giraph` | Graph processing |
 | PostgreSQL | `wayang-postgres` | SQL-capable relational data |
 | SQLite | `wayang-sqlite3` | Lightweight embedded SQL |
-| Apache Kafka | `wayang-kafka` | Streaming data ingestion |
 | TensorFlow | `wayang-tensorflow` | Machine learning workloads |
 
 Register any combination of these by calling `.withPlugin(...)` on your `WayangContext`. The optimizer will use only the platforms you've registered.

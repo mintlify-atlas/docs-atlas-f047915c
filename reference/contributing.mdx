@@ -1,7 +1,7 @@
 ---
 title: "Contributing to Apache Wayang: Development Guide"
 sidebarTitle: "Contributing"
-description: "How to contribute to Apache Wayang: set up your dev environment, build and test, open a pull request, and join the community."
+description: "How to contribute to Apache Wayang: set up your dev environment, build from source, run tests, open a pull request, and engage with the community."
 ---
 
 Apache Wayang is built by the community. Whether you are fixing a typo in the docs, adding a new operator, wiring up a new execution platform, or improving the cost-based optimizer, every contribution moves the project forward. This guide walks you through the contribution workflow, development setup, build commands, and the areas where help is most welcome.
@@ -64,7 +64,7 @@ By contributing to Apache Wayang you agree to the [Apache Software Foundation Co
 
 | Tool | Minimum version | Notes |
 |---|---|---|
-| Java (JDK) | 11 | JDK 17 required for `wayang-api-json` and `wayang-tensorflow` |
+| Java (JDK) | 17 | The entire project compiles at `--release 17`; JDK 17 or later is required |
 | Maven | 3.6 | Use the bundled `./mvnw` wrapper for reproducibility |
 | Scala | 2.12 | Managed by the build; no separate install needed |
 | Git | Any recent version | |
@@ -140,11 +140,15 @@ cd wayang-*/
 ./bin/wayang-submit org.apache.wayang.applications.WordCount -- file:///path/to/input.txt
 ```
 
+<Note>
+The `wayang-submit` script requires `SPARK_HOME` and `HADOOP_HOME` to be set in your environment. See `guides/tutorial.md` in the repository for full environment setup instructions.
+</Note>
+
 ---
 
 ## Code quality
 
-Wayang enforces code style through [Checkstyle](https://checkstyle.sourceforge.io/). The rules are declared in `wayang-resources/src/main/resources/checkstyle/`. Violations fail the build.
+Wayang enforces code style through [Checkstyle](https://checkstyle.sourceforge.io/) using the [Google Java Style](https://google.github.io/styleguide/javaguide.html) ruleset (`google_checks.xml`). Violations fail the build.
 
 Run Checkstyle standalone:
 

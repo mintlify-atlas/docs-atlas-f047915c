@@ -45,9 +45,14 @@ Add the SQL API module alongside your platform dependencies:
 ```java
 import org.apache.wayang.api.sql.context.SqlContext;
 import org.apache.wayang.core.api.Configuration;
+import java.sql.SQLException;
 
 Configuration configuration = new Configuration();
-SqlContext sqlContext = new SqlContext(configuration);
+try {
+    SqlContext sqlContext = new SqlContext(configuration);
+} catch (SQLException e) {
+    throw new RuntimeException(e);
+}
 ```
 
 `SqlContext` automatically registers the `Java`, `Spark`, and `Postgres` plugins when constructed with only a `Configuration`. To control which plugins are active, use the two-argument constructor:
@@ -56,6 +61,7 @@ SqlContext sqlContext = new SqlContext(configuration);
 import org.apache.wayang.core.plugin.Plugin;
 import org.apache.wayang.java.Java;
 import org.apache.wayang.spark.Spark;
+import java.sql.SQLException;
 import java.util.List;
 
 List<Plugin> plugins = List.of(
@@ -63,19 +69,23 @@ List<Plugin> plugins = List.of(
     Postgres.conversionPlugin()
 );
 
-SqlContext sqlContext = new SqlContext(configuration, plugins);
-// Register additional plugins as needed.
-sqlContext.register(Java.basicPlugin());
-sqlContext.register(Spark.basicPlugin());
+try {
+    SqlContext sqlContext = new SqlContext(configuration, plugins);
+    // Register additional plugins as needed.
+    sqlContext.withPlugin(Java.basicPlugin());
+    sqlContext.withPlugin(Spark.basicPlugin());
+} catch (SQLException e) {
+    throw new RuntimeException(e);
+}
 ```
 
 ### SqlContext constructors
 
 | Constructor | Description |
 |---|---|
-| `new SqlContext()` | Default configuration, auto-registers Java + Spark + Postgres. |
-| `new SqlContext(Configuration configuration)` | Custom configuration, auto-registers Java + Spark + Postgres. |
-| `new SqlContext(Configuration configuration, List<Plugin> plugins)` | Custom configuration, explicit plugin list. |
+| `new SqlContext()` | Default configuration, auto-registers Java + Spark + Postgres. Throws `SQLException`. |
+| `new SqlContext(Configuration configuration)` | Custom configuration, auto-registers Java + Spark + Postgres. Throws `SQLException`. |
+| `new SqlContext(Configuration configuration, List<Plugin> plugins)` | Custom configuration, explicit plugin list. Throws `SQLException`. |
 
 ---
 
@@ -396,19 +406,24 @@ When `wayang-postgres` is on the classpath and the Calcite schema points to a Po
 
 ```java
 import org.apache.wayang.postgres.Postgres;
+import java.sql.SQLException;
 
-SqlContext ctx = new SqlContext(configuration, List.of(
-    Java.channelConversionPlugin(),
-    Postgres.conversionPlugin()
-));
-ctx.register(Java.basicPlugin());
-ctx.register(Postgres.plugin());
+try {
+    SqlContext ctx = new SqlContext(configuration, List.of(
+        Java.channelConversionPlugin(),
+        Postgres.conversionPlugin()
+    ));
+    ctx.withPlugin(Java.basicPlugin());
+    ctx.withPlugin(Postgres.plugin());
 
-Collection<Record> results = ctx.executeSql(
-    "SELECT customer_id, SUM(amount) " +
-    "FROM postgres.transactions " +
-    "GROUP BY customer_id"
-);
+    Collection<Record> results = ctx.executeSql(
+        "SELECT customer_id, SUM(amount) " +
+        "FROM postgres.transactions " +
+        "GROUP BY customer_id"
+    );
+} catch (SQLException e) {
+    throw new RuntimeException(e);
+}
 ```
 
 The Wayang cost model will evaluate whether it is cheaper to pull the data to Java/Spark or to push the aggregation down to PostgreSQL, and will choose accordingly.

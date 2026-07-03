@@ -1,5 +1,5 @@
 ---
-title: "Apache Wayang Architecture: How Cross-Platform Execution Works"
+title: "Wayang Architecture: How Cross-Platform Execution Works"
 sidebarTitle: "Architecture"
 description: "Explore Wayang's layered architecture: how a single logical plan flows through the optimizer and gets executed across Java, Spark, Flink, and more."
 ---
@@ -138,7 +138,7 @@ The optimizer re-evaluates cardinality estimates after each loop iteration when 
 Configuration config = new Configuration();
 
 // Override the Spark master for this job
-config.setProperty("wayang.spark.master", "spark://my-cluster:7077");
+config.setProperty("spark.master", "spark://my-cluster:7077");
 
 // Set the directory for explain output
 config.setProperty("wayang.core.explain.directory", "/tmp/wayang-plans/");

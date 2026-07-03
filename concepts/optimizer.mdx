@@ -61,7 +61,7 @@ ProbabilisticDoubleInterval interval = new ProbabilisticDoubleInterval(
 ProbabilisticDoubleInterval exact = ProbabilisticDoubleInterval.ofExactly(42.0);
 ```
 
-When two intervals are combined (e.g., adding costs across two operators), the resulting interval's bounds are added and the correctness probabilities are multiplied. This means a long chain of uncertain estimates naturally produces a wider interval with lower overall confidence — which is what you'd expect.
+When two intervals are combined (e.g., adding costs across two operators), the resulting interval's bounds are added and the combined correctness probability is taken as the minimum of the two. This means a long chain of uncertain estimates naturally produces a wider interval with lower overall confidence — which is what you'd expect.
 
 The **squasher** (configured as `wayang.core.optimizer.cost.squasher`) collapses an interval to a single scalar for the final comparison. The default squasher is the geometric mean: `sqrt(lower × upper)`.
 
@@ -147,8 +147,10 @@ import org.apache.wayang.java.Java;
 import org.apache.wayang.spark.Spark;
 
 public class MyCustomCost implements EstimatableCost {
-    // Implement getEstimate() and getParallelEstimate()
-    // using any model — including an ML model loaded from disk.
+    // Implement getEstimate(), getParallelEstimate(), getSquashedEstimate(),
+    // getSquashedParallelEstimate(), pickBestExecutionPlan(), getFactory(),
+    // and getParallelOperatorJunctionAllCostEstimate() —
+    // using any model, including an ML model loaded from disk.
 }
 
 Configuration config = new Configuration();

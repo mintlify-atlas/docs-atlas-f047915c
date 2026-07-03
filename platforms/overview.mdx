@@ -1,7 +1,7 @@
 ---
 title: "Supported Execution Platforms in Apache Wayang"
 sidebarTitle: "Overview"
-description: "A complete reference of every execution platform Wayang supports, the Maven module that provides it, its entry-point class, and the plugin architecture that wires it all together."
+description: "Every execution platform Apache Wayang supports — Maven module, entry-point class, plugin registration, and which platforms to combine for each workload."
 ---
 
 Apache Wayang abstracts your data pipeline away from any single execution engine by treating every engine as a pluggable platform. You register the platforms you want available, and Wayang's cost-based optimizer decides — at runtime — which platform (or combination of platforms) best executes each operator in your job. Adding more platforms to the registry gives the optimizer more choices, which generally produces better execution plans, especially when data volumes or query shapes change across pipeline stages.

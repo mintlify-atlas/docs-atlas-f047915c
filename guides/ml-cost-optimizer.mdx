@@ -101,7 +101,7 @@ wayang.ml.experience.file = /var/log/wayang/experience.txt
 
 ## Complete `MLCost` implementation
 
-The following example is the full ML-backed `EstimatableCost` implementation. It retrieves the `OrtMLModel` singleton from configuration, encodes the plan with `OneHotEncoder`, and returns the model's prediction as the cost estimate.
+The following example is the full ML-backed `EstimatableCost` implementation from the upstream source guide. It demonstrates the interface structure using `OneHotEncoder.encode(plan)` (which returns a `long[]`) with the `runModel(long[])` stub overload. For a production deployment, replace `OneHotEncoder` + `runModel(long[])` with the `TreeEncoder` → `OrtTensorEncoder` → `runModel(Tuple)` pipeline shown in the [OrtMLModel section](#ortmlmodel-onnx-runtime-inference) below.
 
 ```java
 import org.apache.wayang.core.optimizer.costs.EstimatableCost;
@@ -232,17 +232,35 @@ public class MLCost implements EstimatableCost {
 
 ## `OrtMLModel`: ONNX runtime inference
 
-`OrtMLModel` is a singleton that manages an ONNX Runtime `OrtSession`. It loads the model from the path specified by `wayang.ml.model.file` on first call to `getInstance()`, and reuses the session for all subsequent calls.
+`OrtMLModel` is a singleton that manages an ONNX Runtime `OrtSession`. It loads the model from the path specified by `wayang.ml.model.file` on first call to `getInstance()`, and reuses the session for all subsequent calls. The session is configured with 16 inter-op and 16 intra-op threads and deterministic compute enabled.
 
-The production `runModel` method (in `wayang-plugins/wayang-ml`) accepts an encoded plan represented as a `Tuple<ArrayList<long[][]>, ArrayList<long[][]>>` — values and indexes for a tree-structured input — and returns a `double` prediction. The session is configured with 16 inter-op and 16 intra-op threads and deterministic compute enabled.
+`OrtMLModel` exposes two `runModel` overloads:
+
+- `runModel(long[] encoded)` — a stub overload used in simple examples; it returns `0` and does not run ONNX inference.
+- `runModel(Tuple<ArrayList<long[][]>, ArrayList<long[][]>> input)` — the **production** overload. It takes a tree-structured input (values and index arrays) produced by `OrtTensorEncoder.encode(TreeNode)` and returns the model's `double` cost prediction.
+
+The `DefaultPointwiseCost` class in `wayang-ml` shows the full production path:
 
 ```java
-// OrtMLModel is a singleton — retrieve via configuration
-OrtMLModel model = OrtMLModel.getInstance(config);
+import org.apache.wayang.ml.encoding.OrtMLModel;
+import org.apache.wayang.ml.encoding.OrtTensorEncoder;
+import org.apache.wayang.ml.encoding.TreeEncoder;
+import org.apache.wayang.ml.encoding.TreeNode;
+import org.apache.wayang.ml.encoding.OneHotMappings;
+import org.apache.wayang.core.util.Tuple;
+import java.util.ArrayList;
 
-// Encode the plan and run inference
-long[] encoded = OneHotEncoder.encode(plan);
-double predictedCost = model.runModel(encoded);
+// Set up encoder (once per application)
+TreeEncoder encoder = new TreeEncoder(new OneHotMappings());
+
+// Encode the plan into a tree, then into tensor format
+TreeNode encodedTree = encoder.encode(plan);
+Tuple<ArrayList<long[][]>, ArrayList<long[][]>> tensor =
+    OrtTensorEncoder.encode(encodedTree);
+
+// Run inference
+OrtMLModel model = OrtMLModel.getInstance(config);
+double predictedCost = model.runModel(tensor);  // production overload
 
 // Close when the application exits
 model.closeSession();

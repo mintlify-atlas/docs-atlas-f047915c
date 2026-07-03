@@ -32,6 +32,8 @@ public interface Plugin {
         configuration.getMappingProvider().addAllToWhitelist(this.getMappings());
         configuration.getChannelConversionProvider().addAllToWhitelist(this.getChannelConversions());
         this.setProperties(configuration);
+        // Note: the interface also supports blacklist/exclusion variants via
+        // getExcludedRequiredPlatforms(), getExcludedMappings(), getExcludedChannelConversions()
     }
 }
 ```
@@ -188,7 +190,7 @@ wayang.withPlugin(Spatial.postgresPlugin()); // PostGIS-only
 
 ### Machine Learning
 
-`MachineLearning.plugin()` acts as a coordination plugin for ML workflows. It registers the `MachineLearning` platform marker and enables ML-specific configuration properties. Actual ML operator implementations are contributed by `Spark.mlPlugin()` or by the `wayang-tensorflow` module.
+`MachineLearning.plugin()` is a lightweight coordination plugin for ML workflows. It does not register platform mappings on its own — actual ML operator implementations are contributed by `Spark.mlPlugin()` (for Spark MLlib operators) or by the `wayang-tensorflow` module. Use it as the entry point to pull in the `wayang-ml` module dependency and to combine with the platform-specific ML plugins below.
 
 ```java
 import org.apache.wayang.ml.MachineLearning;

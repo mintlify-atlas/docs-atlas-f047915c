@@ -1,7 +1,7 @@
 ---
 title: "Database Platforms: PostgreSQL, SQLite, Kafka, and More"
 sidebarTitle: "Databases"
-description: "Configure PostgreSQL, SQLite3, Apache Kafka, Apache Giraph, and TensorFlow as Wayang execution platforms — plugins, connection properties, and usage examples."
+description: "Add PostgreSQL, SQLite3, Kafka, Giraph, and TensorFlow to Wayang — plugin registration, connection properties, and operator coverage for each platform."
 ---
 
 Beyond the main compute engines, Wayang supports a range of database, messaging, and specialist platforms. These platforms let the optimizer push work to where the data already lives — running a filter or join inside a database avoids moving data across the network — or tap into specialised engines for graph processing and machine learning. Each platform follows the same plugin registration pattern as Java Streams, Spark, and Flink: add the Maven dependency, call the appropriate `.plugin()` factory, and register it on your `WayangContext`.
@@ -263,7 +263,8 @@ You can load a properties file instead of setting environment variables:
 ```java
 Properties kafkaProps = KafkaTopicSource.loadConfig("/path/to/kafka.properties");
 KafkaTopicSource source = new KafkaTopicSource("events");
-source.getConsumer(kafkaProps); // attach custom properties before execution
+// getConsumer(Properties) creates and subscribes a KafkaConsumer using the provided properties
+KafkaConsumer<String, String> consumer = source.getConsumer(kafkaProps);
 ```
 
 The `wayang-spark-kafka.properties` reference file in `conf/` shows the broker-side settings for a local Kafka cluster:

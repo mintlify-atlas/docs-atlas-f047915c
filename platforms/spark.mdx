@@ -1,7 +1,7 @@
 ---
 title: "Apache Spark Platform: Distributed Processing with Wayang"
 sidebarTitle: "Apache Spark"
-description: "Configure and use Apache Spark as a Wayang execution platform — plugins, Maven setup, Spark configuration keys, RDD vs Dataset channels, and a complete example."
+description: "Use Apache Spark with Wayang — register basicPlugin and graphPlugin, set Spark config keys, RDD vs Dataset channels, and a word-count example."
 ---
 
 The Apache Spark platform adapter lets Wayang route operators to a Spark cluster (or a local Spark context) without changing a single line of your pipeline code. You register `Spark.basicPlugin()` alongside any other platforms you have, and Wayang's cost-based optimizer decides which operators run on Spark and which run elsewhere. Spark's strength is large-scale batch processing: its in-memory RDD model and cluster scheduler amortize startup overhead over large datasets in a way that local engines cannot match.
@@ -56,7 +56,7 @@ Spark.mlPlugin()
 
 `Spark.basicPlugin()` covers all standard Wayang operators on Spark:
 
-- **Sources**: `TextFileSource`, `ObjectFileSource`, `CollectionSource`, `ParquetSource`, `KafkaTopicSource`, `TableSink`
+- **Sources**: `TextFileSource`, `ObjectFileSource`, `CollectionSource`, `ParquetSource`, `KafkaTopicSource`
 - **Transformations**: `MapOperator`, `MapPartitionsOperator`, `FlatMapOperator`, `FilterOperator`, `SortOperator`, `DistinctOperator`, `ZipWithIdOperator`
 - **Aggregations**: `ReduceByOperator`, `GlobalReduceOperator`, `MaterializedGroupByOperator`, `GlobalMaterializedGroupOperator`, `CountOperator`
 - **Multi-input**: `JoinOperator`, `CartesianOperator`, `CoGroupOperator`, `UnionAllOperator`, `IntersectOperator`

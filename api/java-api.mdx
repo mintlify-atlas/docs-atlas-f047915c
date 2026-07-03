@@ -97,14 +97,6 @@ planBuilder.readTextFile("file:///data/input.txt")
            .withName("Read input");
 ```
 
-### readObjectFile
-
-```java
-planBuilder.readObjectFile(String url)
-```
-
-Reads a serialized Java object file. The element type `T` is inferred from the generic context.
-
 ### readParquet
 
 ```java
@@ -375,18 +367,10 @@ Collection<Tuple2<String, Integer>> results = planBuilder
 
 ### writeTextFile
 
-Write each element, formatted by a UDF, to a text file.
+Write each element, formatted by a UDF, to a text file. The `jobName` parameter is required on `DataQuantaBuilder` to label the execution job.
 
 ```java
-.writeTextFile("file:///output.txt", t -> t.getField0() + "\t" + t.getField1())
-```
-
-### writeObjectFile
-
-Serialize elements to an object file.
-
-```java
-.writeObjectFile("file:///objects.bin")
+.writeTextFile("file:///output.txt", t -> t.getField0() + "\t" + t.getField1(), "WriteResults")
 ```
 
 ### foreach / foreachJava
@@ -408,8 +392,7 @@ Every `DataQuantaBuilder` exposes the following fluent annotations. These do not
 | `.withName(String name)` | Labels the operator in logs and plan visualizations. |
 | `.withSelectivity(double lowerBound, double upperBound, double confidence)` | Hints to the optimizer how much data this operator produces relative to its input. |
 | `.withCardinalityEstimator(CardinalityEstimator estimator)` | Plugs in a custom cardinality estimator for more accurate cost modeling. |
-| `.withCardinalityEstimator(long estimate)` | Convenience overload for a constant cardinality hint. |
-| `.withTargetPlatforms(Platform... platforms)` | Restricts execution of this operator to specific platforms. |
+| `.withTargetPlatform(Platform platform)` | Restricts execution of this operator to a specific platform. |
 | `.withUdfJarOf(Class<?> cls)` | Ensures the JAR containing `cls` is shipped to remote engines. |
 | `.withBroadcast(DataQuantaBuilder<?> sender, String name)` | Makes the `sender` dataset available as a broadcast variable inside this operator's UDF. |
 
@@ -520,18 +503,14 @@ planBuilder
     ```java
     .writeTextFile(
         "file:///output/results.txt",
-        tuple -> tuple.getField0() + "\t" + tuple.getField1()
+        tuple -> tuple.getField0() + "\t" + tuple.getField1(),
+        "WriteResults"
     );
-    ```
-  </Tab>
-  <Tab title="Object file">
-    ```java
-    .writeObjectFile("file:///output/objects");
     ```
   </Tab>
   <Tab title="Kafka topic">
     ```java
-    .writeKafkaTopic("output-topic", record -> record.toString());
+    .writeKafkaTopic("output-topic", record -> record.toString(), "WriteKafka", null);
     ```
   </Tab>
   <Tab title="Database table">

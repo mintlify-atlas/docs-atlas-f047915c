@@ -37,9 +37,10 @@ import org.apache.wayang.flink.Flink;
 
 // Standard operators via Flink's DataSet API (default)
 // or bounded DataStreams depending on configuration
+// Note: PageRankOperator is included inside basicPlugin() via BASIC_MAPPINGS
 Flink.basicPlugin()
 
-// Graph operators: PageRank on Flink
+// Graph plugin stub — currently empty; PageRank is already in basicPlugin()
 Flink.graphPlugin()
 
 // Channel-conversion rules (Flink DataSet ↔ Java Collection, etc.)
@@ -78,7 +79,7 @@ WayangContext wayang = new WayangContext(conf)
 - **Control flow**: `LoopOperator`, `DoWhileOperator`, `RepeatOperator`, `SampleOperator`
 - **Sinks**: `TextFileSink`, `ObjectFileSink`, `LocalCallbackSink`
 
-`Flink.graphPlugin()` adds `PageRankOperator`.
+`PageRankOperator` is mapped by `PageRankMapping`, which is already included in `BASIC_MAPPINGS` (used by `Flink.basicPlugin()`). `Flink.graphPlugin()` exists as a stub but currently contributes no additional mappings.
 
 ### Bounded DataStream mappings (`BOUNDED_STREAM_MAPPINGS`)
 

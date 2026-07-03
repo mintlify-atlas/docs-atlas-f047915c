@@ -486,24 +486,31 @@ The implicit conversion is triggered automatically when you call `projectRecords
 
 ```scala
 import org.apache.wayang.api._
-import org.apache.wayang.core.api.{Configuration, WayangContext}
+import org.apache.wayang.core.api.Configuration
+import org.apache.wayang.java.Java
+import org.apache.wayang.spark.Spark
 
-val ctx1 = new MultiContext(new WayangContext(new Configuration).withPlugin(Java.basicPlugin))
-val ctx2 = new MultiContext(new WayangContext(new Configuration).withPlugin(Spark.basicPlugin))
+// MultiContext extends WayangContext — pass a Configuration, then register plugins.
+val ctx1 = new MultiContext(new Configuration).withPlugin(Java.basicPlugin)
+val ctx2 = new MultiContext(new Configuration).withPlugin(Spark.basicPlugin)
 
 val multiBuilder = new MultiContextPlanBuilder(List(ctx1, ctx2))
   .withUdfJarsOf(this.getClass)
 
-// Run readTextFile on ctx1 and ctx2 independently, then merge results.
-val results: MultiContextDataQuanta[String] = multiBuilder
+// Read a text file in each context independently.
+val results = multiBuilder
   .readTextFile(ctx1, "file:///data/part-a.txt")
   .readTextFile(ctx2, "file:///data/part-b.txt")
 
 // Apply transformations uniformly across all contexts.
+// Each context gets its own sink via MultiContext.withTextFileSink before calling execute().
+ctx1.withTextFileSink("file:///output/part-a.txt")
+ctx2.withTextFileSink("file:///output/part-b.txt")
+
 results
   .forEach(_.flatMap(_.split("\\W+")))
   .forEach(_.filter(_.nonEmpty))
-  .forEach(_.collect().foreach(println))
+  .execute()
 ```
 
 `MultiContextPlanBuilder` key methods:
@@ -513,8 +520,18 @@ results
 | `readTextFile(ctx, url)` | Reads a text file in the specified context. |
 | `readObjectFile[T](ctx, url)` | Reads an object file in the specified context. |
 | `loadCollection[T](ctx, iterable)` | Loads an in-memory collection in the specified context. |
-| `forEach[Out](f: PlanBuilder => DataQuanta[Out])` | Applies `f` to every context's plan builder. |
+| `forEach[Out](f: PlanBuilder => DataQuanta[Out])` | Applies `f` to each context's `PlanBuilder`; returns a `MultiContextDataQuanta`. |
 | `withUdfJarsOf(classes*)` | Registers UDF JARs for all contexts. |
+
+`MultiContextDataQuanta` key methods:
+
+| Method | Description |
+|--------|-------------|
+| `forEach[NewOut](f: DataQuanta[Out] => DataQuanta[NewOut])` | Applies a transformation `f` to each context's `DataQuanta`. |
+| `combineEach[ThatOut, NewOut](that, f)` | Merges two `MultiContextDataQuanta` element-wise using `f`. |
+| `withTargetPlatforms(platforms*)` | Restricts all contexts' operators to the given platforms. |
+| `execute(timeout)` | Executes all context plans in parallel, blocking until all finish. |
+| `mergeUnion(mergeContext)` | Executes all contexts, then unions the results into a single `DataQuanta`. |
 
 ---
 

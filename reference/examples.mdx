@@ -69,7 +69,7 @@ public class WordCount {
 
     public static void main(String[] args) {
 
-        // Settings — pass the input path as args[1]
+        // Settings — input path is args[1]; args[0] is a placeholder (e.g. "--")
         String inputUrl = args[1];
 
         // Get a plan builder.
@@ -77,13 +77,12 @@ public class WordCount {
         // optimizer choose between both engines.
         WayangContext wayangContext = new WayangContext(new Configuration())
                 .withPlugin(Java.basicPlugin());
-        //      .withPlugin(Spark.basicPlugin());
-
+        //        .withPlugin(Spark.basicPlugin());
         JavaPlanBuilder planBuilder = new JavaPlanBuilder(wayangContext)
                 .withJobName(String.format("WordCount (%s)", inputUrl))
                 .withUdfJarOf(WordCount.class);
 
-        // Build and execute the WayangPlan.
+        // Start building the WayangPlan.
         Collection<Tuple2<String, Integer>> wordcounts = planBuilder
                 // Read the text file.
                 .readTextFile(inputUrl).withName("Load file")
@@ -99,17 +98,14 @@ public class WordCount {
                 .withName("Filter empty words")
 
                 // Attach counter to each word.
-                .map(word -> new Tuple2<>(word.toLowerCase(), 1))
-                .withName("To lower case, add counter")
+                .map(word -> new Tuple2<>(word.toLowerCase(), 1)).withName("To lower case, add counter")
 
                 // Sum up counters for every word.
                 .reduceByKey(
                         Tuple2::getField0,
                         (t1, t2) -> new Tuple2<>(t1.getField0(), t1.getField1() + t2.getField1())
                 )
-                .withCardinalityEstimator(
-                        new DefaultCardinalityEstimator(0.9, 1, false, in -> Math.round(0.01 * in[0]))
-                )
+                .withCardinalityEstimator(new DefaultCardinalityEstimator(0.9, 1, false, in -> Math.round(0.01 * in[0])))
                 .withName("Add counters")
 
                 // Execute the plan and collect the results.
@@ -262,27 +258,28 @@ public class WordCountOnKafkaTopic {
     public static void main(String[] args) {
 
         // Default topic names — override by passing args[0]
-        String inputTopicName  = "banking-tx-small-csv";
-        String outputTopicName = "word_count_contribution___banking-tx-small-csv";
+        String input_topicName  = "banking-tx-small-csv";
+        String output_topicName = "word_count_contribution___banking-tx-small-csv";
 
         if (args.length > 0) {
-            inputTopicName = args[0];
+            input_topicName = args[0];
         }
 
         Configuration configuration = new Configuration();
 
+        // Get a plan builder.
         WayangContext wayangContext = new WayangContext(configuration)
                 .withPlugin(Java.basicPlugin());
-
+        //        .withPlugin(Spark.basicPlugin());
         JavaPlanBuilder planBuilder = new JavaPlanBuilder(wayangContext)
                 .withJobName(String.format(
-                        "WordCount using Java Context on Kafka topic (%s)", inputTopicName))
+                        "WordCount using Java Context on Kafka topic (%s)", input_topicName))
                 .withUdfJarOf(WordCountOnKafkaTopic.class);
 
-        // Build the WayangPlan.
+        // Start building the WayangPlan.
         planBuilder
                 // Read records from the input Kafka topic.
-                .readKafkaTopic(inputTopicName).withName("Load data from topic")
+                .readKafkaTopic(input_topicName).withName("Load data from topic")
 
                 // Split each record by non-word characters.
                 .flatMap(line -> Arrays.asList(line.split("\\W+")))
@@ -295,27 +292,19 @@ public class WordCountOnKafkaTopic {
                 .withName("Filter empty words")
 
                 // Attach counter to each word.
-                .map(word -> new Tuple2<>(word.toLowerCase(), 1))
-                .withName("To lower case, add counter")
+                .map(word -> new Tuple2<>(word.toLowerCase(), 1)).withName("To lower case, add counter")
 
                 // Sum up counters for every word.
                 .reduceByKey(
                         Tuple2::getField0,
                         (t1, t2) -> new Tuple2<>(t1.getField0(), t1.getField1() + t2.getField1())
                 )
-                .withCardinalityEstimator(
-                        new DefaultCardinalityEstimator(0.9, 1, false, in -> Math.round(0.01 * in[0]))
-                )
+                .withCardinalityEstimator(new DefaultCardinalityEstimator(0.9, 1, false, in -> Math.round(0.01 * in[0])))
                 .withName("Add counters")
 
                 // Write results back to a Kafka topic.
-                .writeKafkaTopic(
-                        outputTopicName,
-                        d -> String.format("%d, %s", d.getField1(), d.getField0()),
-                        "job_test_1",
-                        LoadProfileEstimators.createFromSpecification(
-                                "wayang.java.kafkatopicsink.load", configuration)
-                );
+                .writeKafkaTopic(output_topicName, d -> String.format("%d, %s", d.getField1(), d.getField0()), "job_test_1",
+                        LoadProfileEstimators.createFromSpecification("wayang.java.kafkatopicsink.load", configuration));
 
         System.out.println("### Done. ***");
     }
@@ -354,7 +343,6 @@ public class WordCountOnKafkaTopic {
 
     ./bin/wayang-submit \
       org.apache.wayang.applications.WordCountOnKafkaTopic \
-      -- \
       banking-tx-small-csv
     ```
   </Step>
@@ -423,33 +411,30 @@ import scala.util.Random
 import scala.collection.JavaConversions._
 
 object kmeans {
-  def main(args: Array[String]): Unit = {
+  def main(args: Array[String]) {
 
     // Settings
-    val inputUrl   = "file:/kmeans.txt"
-    val k          = 5
+    val inputUrl = "file:/kmeans.txt"
+    val k = 5
     val iterations = 100
     val configuration = new Configuration
 
-    // Register both platforms — the optimizer picks per step.
+    // Get a plan builder.
     val wayangContext = new WayangContext(new Configuration)
       .withPlugin(Java.basicPlugin)
       .withPlugin(Spark.basicPlugin)
-
     val planBuilder = new PlanBuilder(wayangContext)
       .withJobName(s"k-means ($inputUrl, k=$k, $iterations iterations)")
       .withUdfJarsOf(this.getClass)
 
-    // Data model
     case class Point(x: Double, y: Double)
     case class TaggedPoint(x: Double, y: Double, cluster: Int)
     case class TaggedPointCounter(x: Double, y: Double, cluster: Int, count: Long) {
-      def add_points(that: TaggedPointCounter) =
-        TaggedPointCounter(this.x + that.x, this.y + that.y, this.cluster, this.count + that.count)
+      def add_points(that: TaggedPointCounter) = TaggedPointCounter(this.x + that.x, this.y + that.y, this.cluster, this.count + that.count)
       def average = TaggedPointCounter(x / count, y / count, cluster, 0)
     }
 
-    // Read and parse the input file.
+    // Read and parse the input file(s).
     val points = planBuilder
       .readTextFile(inputUrl).withName("Read file")
       .map { line =>
@@ -457,32 +442,29 @@ object kmeans {
         Point(fields(0).toDouble, fields(1).toDouble)
       }.withName("Create points")
 
-    // Create k random initial centroids.
+
+    // Create initial centroids.
     val random = new Random
     val initialCentroids = planBuilder
-      .loadCollection(
-        for (i <- 1 to k) yield TaggedPointCounter(random.nextGaussian(), random.nextGaussian(), i, 0)
-      ).withName("Load random centroids")
+      .loadCollection(for (i <- 1 to k) yield TaggedPointCounter(random.nextGaussian(), random.nextGaussian(), i, 0)).withName("Load random centroids")
 
-    // UDF: for each point, find the nearest centroid.
-    // Centroids are passed in via broadcast rather than a join.
+    // Declare UDF to select centroid for each data point.
     class SelectNearestCentroid extends ExtendedSerializableFunction[Point, TaggedPointCounter] {
 
+      /** Keeps the broadcasted centroids. */
       var centroids: Iterable[TaggedPointCounter] = _
 
-      override def open(executionCtx: ExecutionContext): Unit = {
+      override def open(executionCtx: ExecutionContext) = {
         centroids = executionCtx.getBroadcast[TaggedPointCounter]("centroids")
       }
 
       override def apply(point: Point): TaggedPointCounter = {
-        var minDistance      = Double.PositiveInfinity
+        var minDistance = Double.PositiveInfinity
         var nearestCentroidId = -1
         for (centroid <- centroids) {
-          val distance = Math.pow(
-            Math.pow(point.x - centroid.x, 2) + Math.pow(point.y - centroid.y, 2), 0.5
-          )
+          val distance = Math.pow(Math.pow(point.x - centroid.x, 2) + Math.pow(point.y - centroid.y, 2), 0.5)
           if (distance < minDistance) {
-            minDistance       = distance
+            minDistance = distance
             nearestCentroidId = centroid.cluster
           }
         }
@@ -490,20 +472,20 @@ object kmeans {
       }
     }
 
-    // Iterative k-means loop.
+    // Do the k-means loop.
     val finalCentroids = initialCentroids.repeat(iterations, { currentCentroids =>
       points
-        .mapJava(
-          new SelectNearestCentroid,
+        .mapJava(new SelectNearestCentroid,
           udfLoad = LoadProfileEstimators.createFromSpecification(
             "my.udf.costfunction.key", configuration
-          )
-        )
+          ))
         .withBroadcast(currentCentroids, "centroids").withName("Find nearest centroid")
         .reduceByKey(_.cluster, _.add_points(_)).withName("Add up points")
         .withCardinalityEstimator(k)
         .map(_.average).withName("Average points")
     }).withName("Loop")
+
+      // Collect the results.
       .collect()
 
     println(finalCentroids)
@@ -535,12 +517,15 @@ object kmeans {
     ```
   </Step>
   <Step title="Submit the job">
+    The k-means example above is a standalone Scala object. Add it to a Maven module, compile it, and include it in the assembly fat-jar. Once packaged, submit it with:
+
     ```bash
     ./bin/wayang-submit \
-      org.apache.wayang.apps.kmeans.kmeans \
-      -- \
+      kmeans \
       file:///tmp/kmeans.txt
     ```
+
+    Alternatively, the `wayang-benchmark` module ships a production-ready k-means implementation at `org.apache.wayang.apps.kmeans.Kmeans` that accepts an experiment descriptor and platform list as the first two arguments (see `wayang-benchmark/README.md` for the full parameter format).
 
     <Tip>
     Increase `iterations` or `k` in the source to stress-test the optimizer's cross-platform decisions. On large inputs Wayang will push the `reduceByKey` to Spark while keeping small broadcast-variable lookups on the local Java engine.

@@ -235,20 +235,20 @@ import org.apache.wayang.basic.data.Tuple2;
 import org.apache.wayang.java.Java;
 import org.apache.wayang.spark.Spark;
 import java.util.Arrays;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Collection;
 
 public class WordCount {
     public static void main(String[] args) {
-        List<Tuple2<String, Integer>> results = new ArrayList<>();
-
         WayangContext wayang = new WayangContext(new Configuration())
                 .withPlugin(Java.basicPlugin())
                 .withPlugin(Spark.basicPlugin());
 
-        new JavaPlanBuilder(wayang)
+        JavaPlanBuilder planBuilder = new JavaPlanBuilder(wayang)
                 .withJobName("WordCount")
-                .withUdfJarOf(WordCount.class)
+                .withUdfJarOf(WordCount.class);
+
+        // Build the plan and collect results
+        Collection<Tuple2<String, Integer>> results = planBuilder
                 // Source
                 .readTextFile("file:///path/to/input.txt")          // TextFileSource
                 // Transformations
@@ -260,10 +260,10 @@ public class WordCount {
                     Tuple2::getField0,
                     (a, b) -> new Tuple2<>(a.getField0(), a.getField1() + b.getField1())
                 )                                                    // ReduceByOperator
-                // Sink
-                .collect(results);                                   // LocalCallbackSink
+                // Execute and collect
+                .collect();                                          // triggers execution
 
-        results.forEach(t -> System.out.println(t.field0 + ": " + t.field1));
+        results.forEach(t -> System.out.println(t.getField0() + ": " + t.getField1()));
     }
 }
 ```

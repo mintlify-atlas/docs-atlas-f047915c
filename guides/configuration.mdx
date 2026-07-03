@@ -1,7 +1,7 @@
 ---
 title: "Configuring Apache Wayang: Properties, Logging, and Tuning"
 sidebarTitle: "Configuration"
-description: "Learn how to configure Apache Wayang using property files and the Configuration API — covering logging, plan explanation, Spark, Flink, and Python settings."
+description: "Configure Apache Wayang with property files and the Configuration API — covering logging, plan explanation, Spark, Flink, and Python settings."
 ---
 
 Apache Wayang's behavior is governed by a layered `Configuration` object that every `WayangContext` and `Job` carries. You can supply defaults through `.properties` files, override them programmatically, and fork child configurations for per-job tuning — all without touching application code. This page explains the hierarchy, the key properties to know, and how to configure each supported platform.
@@ -132,10 +132,16 @@ When no cost model is provided for an operator, Wayang uses these interval value
 |---|---|---|
 | `wayang.core.fallback.udf.cpu.lower` | `100` | Lower bound for UDF CPU cost. |
 | `wayang.core.fallback.udf.cpu.upper` | `1000` | Upper bound for UDF CPU cost. |
+| `wayang.core.fallback.udf.cpu.confidence` | `0.2` | Confidence for UDF CPU estimate interval. |
 | `wayang.core.fallback.udf.ram.lower` | `100` | Lower bound for UDF RAM cost. |
 | `wayang.core.fallback.udf.ram.upper` | `1000` | Upper bound for UDF RAM cost. |
+| `wayang.core.fallback.udf.ram.confidence` | `0.2` | Confidence for UDF RAM estimate interval. |
 | `wayang.core.fallback.operator.cpu.lower` | `100` | Lower bound for operator CPU cost. |
 | `wayang.core.fallback.operator.cpu.upper` | `1000` | Upper bound for operator CPU cost. |
+| `wayang.core.fallback.operator.cpu.confidence` | `0.2` | Confidence for operator CPU estimate interval. |
+| `wayang.core.fallback.operator.ram.lower` | `100` | Lower bound for operator RAM cost. |
+| `wayang.core.fallback.operator.ram.upper` | `1000` | Upper bound for operator RAM cost. |
+| `wayang.core.fallback.operator.ram.confidence` | `0.2` | Confidence for operator RAM estimate interval. |
 
 ## Spark configuration properties
 

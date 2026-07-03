@@ -75,7 +75,7 @@ Add one dependency per execution engine you want Wayang to consider. Each artifa
 <!-- Apache Giraph (graph processing) -->
 <dependency>
   <groupId>org.apache.wayang</groupId>
-  <artifactId>wayang-graphchi</artifactId>
+  <artifactId>wayang-giraph</artifactId>
   <version>WAYANG_VERSION</version>
 </dependency>
 
@@ -83,13 +83,6 @@ Add one dependency per execution engine you want Wayang to consider. Each artifa
 <dependency>
   <groupId>org.apache.wayang</groupId>
   <artifactId>wayang-tensorflow</artifactId>
-  <version>WAYANG_VERSION</version>
-</dependency>
-
-<!-- Apache Kafka (streaming data ingestion) -->
-<dependency>
-  <groupId>org.apache.wayang</groupId>
-  <artifactId>wayang-kafka</artifactId>
   <version>WAYANG_VERSION</version>
 </dependency>
 ```
@@ -118,9 +111,8 @@ The profiler learns operator and UDF cost functions from historical executions, 
 | `wayang-flink` | Apache Flink platform adapter | Optional |
 | `wayang-postgres` | PostgreSQL platform adapter | Optional |
 | `wayang-sqlite3` | SQLite platform adapter | Optional |
-| `wayang-graphchi` | Apache Giraph / GraphChi adapter | Optional |
+| `wayang-giraph` | Apache Giraph adapter | Optional |
 | `wayang-tensorflow` | TensorFlow platform adapter | Optional |
-| `wayang-kafka` | Apache Kafka platform adapter | Optional |
 | `wayang-profiler` | Learns cost functions from execution history | Optional |
 
 ---
